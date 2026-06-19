@@ -90,20 +90,15 @@ async function deleteChat(chat) {
             if (!response.ok) throw new Error('Failed to delete chat');
         }
 
-        // ── 삭제 후 정리 ──
-        // 1) 내부 캐시 무효화
         cachedChats = null;
 
-        // 2) 현재 활성 채팅을 삭제한 경우 SillyTavern에 알림
         const currentChatId = getCurrentChatId();
         if (chat.file_name === currentChatId) {
-            // CHAT_CHANGED 이벤트를 발행하여 ST가 내부 상태를 리셋하도록 유도
             if (eventSource && typeof eventSource.emit === 'function') {
                 eventSource.emit(event_types.CHAT_CHANGED, { chatId: null });
             }
         }
 
-        // 3) 채팅 목록 관련 이벤트 발행 (다른 UI가 갱신할 수 있도록)
         if (eventSource && typeof eventSource.emit === 'function') {
             try {
                 eventSource.emit(event_types.CHAT_DELETED, {
@@ -132,11 +127,6 @@ let cachedChats = null;
 // =========================
 // Date Grouping Helper
 // =========================
-
-/**
- * 날짜 기준으로 채팅을 그룹핑하기 위한 라벨을 반환합니다.
- * ChatPlus 방식 참고: 오늘, 어제, 이번 주, 이번 달, 이전 달별 그룹
- */
 function getDateGroupLabel(date) {
     if (!date) return t`Unknown`;
 
@@ -154,20 +144,17 @@ function getDateGroupLabel(date) {
         return t`Yesterday`;
     }
 
-    // 이번 주 (일요일 시작 기준)
     const weekStart = new Date(today);
     weekStart.setDate(today.getDate() - today.getDay());
     if (chatDay >= weekStart) {
         return t`This Week`;
     }
 
-    // 이번 달
     const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
     if (chatDay >= monthStart) {
         return t`This Month`;
     }
 
-    // 그 이전: "YYYY년 M월" 형태
     const year = date.getFullYear();
     const month = date.getMonth() + 1;
     return `${year}년 ${month}월`;
@@ -176,7 +163,6 @@ function getDateGroupLabel(date) {
 // =========================
 // UI Rendering
 // =========================
-
 function createPreviewImage(chat) {
     if (chat.isGroup) {
         const wrapper = document.createElement('div');
@@ -210,11 +196,9 @@ function renderChatItem(chat, container, refreshCallback) {
     const item = document.createElement('div');
     item.className = 'cm-chat-item' + (isCurrentChat ? ' cm-current' : '');
 
-    // Preview image
     const previewImg = createPreviewImage(chat);
     item.appendChild(previewImg);
 
-    // Info section
     const info = document.createElement('div');
     info.className = 'cm-chat-info';
 
@@ -237,11 +221,9 @@ function renderChatItem(chat, container, refreshCallback) {
     info.appendChild(bottomRow);
     item.appendChild(info);
 
-    // Action buttons container
     const actions = document.createElement('div');
     actions.className = 'cm-chat-actions';
 
-    // Rename button
     const renameBtn = document.createElement('button');
     renameBtn.className = 'cm-action-btn';
     renameBtn.title = t`Rename chat`;
@@ -280,7 +262,6 @@ function renderChatItem(chat, container, refreshCallback) {
     });
     actions.appendChild(renameBtn);
 
-    // Delete button
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'cm-action-btn cm-delete-btn';
     deleteBtn.title = t`Delete chat`;
@@ -328,7 +309,6 @@ function renderChatItem(chat, container, refreshCallback) {
     item.appendChild(actions);
     container.appendChild(item);
 
-    // Click to open chat
     item.addEventListener('click', async (e) => {
         if (e.target.closest('.cm-action-btn')) return;
         const ctx = SillyTavern.getContext();
@@ -360,7 +340,6 @@ async function fetchAllChats() {
     let allChats = [];
     let chatStatsMap = {};
 
-    // Fetch character chats in parallel
     const chatListPromises = Object.entries(characters).map(async ([charId, char]) => {
         try {
             const chats = await getListOfCharacterChats(char.avatar);
@@ -374,7 +353,6 @@ async function fetchAllChats() {
         } catch { return []; }
     });
 
-    // Fetch group chats in parallel
     let groupChats = [];
     try {
         const resp = await fetch('/api/groups/all', {
@@ -411,7 +389,6 @@ async function fetchAllChats() {
     const charChatLists = await Promise.all(chatListPromises);
     allChats = [...charChatLists.flat(), ...groupChats];
 
-    // Fetch stats for sorting by last message date
     const uniqueCharIds = [...new Set(allChats.filter(c => !c.isGroup).map(c => c.characterId))];
     const uniqueGroupIds = [...new Set(allChats.filter(c => c.isGroup).map(c => c.characterId))];
 
@@ -440,7 +417,6 @@ async function fetchAllChats() {
     const statsEntries = (await Promise.all([...charStatsPromises, ...groupStatsPromises])).flat();
     chatStatsMap = Object.fromEntries(statsEntries);
 
-    // Merge stats, parse dates, sort by most recent
     allChats = allChats.map(chat => {
         const stat = chatStatsMap[chat.characterId + ':' + chat.file_name];
         let lastMesDate = null;
@@ -457,7 +433,7 @@ async function fetchAllChats() {
 }
 
 // =========================
-// List Rendering
+// List Rendering (★ 수정된 함수)
 // =========================
 async function renderChatList(container, filter = '', offset = 0) {
     const allChats = await fetchAllChats();
@@ -478,9 +454,9 @@ async function renderChatList(container, filter = '', offset = 0) {
     const listContainer = container.querySelector('#cm-list');
     const target = listContainer || container;
 
-    // ★ 핵심 변경: offset이 0일 때만 목록 초기화 (필터 변경, 새로고침 등)
-    //    offset > 0이면 "Load More"이므로 기존 목록을 유지
-    if (offset === 0 && target) {
+    // ★ offset이 0일 때만 목록 초기화 (필터 변경, 새로고침 등)
+    //   offset > 0이면 "Load More"이므로 기존 목록 유지
+    if (offset === 0) {
         target.innerHTML = '';
     }
 
@@ -489,8 +465,7 @@ async function renderChatList(container, filter = '', offset = 0) {
         await renderChatList(container, filter, 0);
     };
 
-    // ── 날짜 구분선을 삽입하며 채팅 아이템 렌더링 ──
-    // ★ 이미 렌더링된 마지막 날짜 그룹 라벨을 가져옴
+    // ★ 이어 붙이기 시 기존 마지막 날짜 라벨을 이어받음
     let lastGroupLabel = null;
     if (offset > 0) {
         const existingSeparators = target.querySelectorAll('.cm-date-separator');
@@ -517,7 +492,6 @@ async function renderChatList(container, filter = '', offset = 0) {
         if (offset + MAX_CHATS_PER_PAGE < total) {
             loadMoreBtn.classList.remove('hidden');
             loadMoreBtn.onclick = async () => {
-                // ★ 다음 페이지를 이어 붙이기
                 await renderChatList(container, filter, offset + MAX_CHATS_PER_PAGE);
             };
         } else {
@@ -525,47 +499,7 @@ async function renderChatList(container, filter = '', offset = 0) {
         }
     }
 
-    // Chat count display
-    const countEl = container.querySelector('#cm-count');
-    if (countEl) {
-        countEl.textContent = t`Total` + ': ' + total + (filter ? (' (' + t`filtered` + ')') : '');
-    }
-
-    // Hide loader
-    const loader = container.querySelector('#cm-loader');
-    if (loader) loader.classList.add('hidden');
-}
-
-
-    // ── 날짜 구분선을 삽입하며 채팅 아이템 렌더링 ──
-    let lastGroupLabel = null;
-
-    page.forEach(chat => {
-        const label = getDateGroupLabel(chat.last_mes);
-        if (label !== lastGroupLabel) {
-            lastGroupLabel = label;
-            const separator = document.createElement('div');
-            separator.className = 'cm-date-separator';
-            separator.textContent = label;
-            target.appendChild(separator);
-        }
-        renderChatItem(chat, target, refreshCallback);
-    });
-
-    // Load more button
-    const loadMoreBtn = container.querySelector('#cm-load-more');
-    if (loadMoreBtn) {
-        if (offset + MAX_CHATS_PER_PAGE < total) {
-            loadMoreBtn.classList.remove('hidden');
-            loadMoreBtn.onclick = async () => {
-                await renderChatList(container, filter, offset + MAX_CHATS_PER_PAGE);
-            };
-        } else {
-            loadMoreBtn.classList.add('hidden');
-        }
-    }
-
-    // Chat count display
+    // Chat count
     const countEl = container.querySelector('#cm-count');
     if (countEl) {
         countEl.textContent = t`Total` + ': ' + total + (filter ? (' (' + t`filtered` + ')') : '');
@@ -583,7 +517,6 @@ function buildManagerUI() {
     const container = document.createElement('div');
     container.id = 'cm-container';
 
-    // Title row
     const titleRow = document.createElement('div');
     titleRow.className = 'cm-title-row';
     const titleText = document.createElement('div');
@@ -592,7 +525,6 @@ function buildManagerUI() {
     titleRow.appendChild(titleText);
     container.appendChild(titleRow);
 
-    // Filter row
     const filterRow = document.createElement('div');
     filterRow.className = 'cm-filter-row';
 
@@ -614,40 +546,33 @@ function buildManagerUI() {
     filterRow.appendChild(inputWrapper);
     container.appendChild(filterRow);
 
-    // Chat count
     const countEl = document.createElement('div');
     countEl.id = 'cm-count';
     countEl.className = 'cm-count';
     container.appendChild(countEl);
 
-    // Loader
     const loader = document.createElement('div');
     loader.id = 'cm-loader';
     loader.className = 'cm-loader';
     loader.innerHTML = '<i class="fa-2x fa-solid fa-gear fa-spin"></i>';
     container.appendChild(loader);
 
-    // Chat list
     const list = document.createElement('div');
     list.id = 'cm-list';
     container.appendChild(list);
 
-    // Load more button
     const loadMoreBtn = document.createElement('button');
     loadMoreBtn.id = 'cm-load-more';
     loadMoreBtn.className = 'cm-load-more hidden';
     loadMoreBtn.textContent = t`Load More`;
     container.appendChild(loadMoreBtn);
 
-    // Events
     let debounceTimer = null;
     filterInput.addEventListener('input', (e) => {
         const val = e.target.value.trim();
         clearBtn.classList.toggle('hidden', val.length === 0);
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
-            const listEl = container.querySelector('#cm-list');
-            if (listEl) listEl.innerHTML = '';
             const loaderEl = container.querySelector('#cm-loader');
             if (loaderEl) loaderEl.classList.remove('hidden');
             renderChatList(container, val, 0);
@@ -657,8 +582,6 @@ function buildManagerUI() {
     clearBtn.addEventListener('click', () => {
         filterInput.value = '';
         clearBtn.classList.add('hidden');
-        const listEl = container.querySelector('#cm-list');
-        if (listEl) listEl.innerHTML = '';
         const loaderEl = container.querySelector('#cm-loader');
         if (loaderEl) loaderEl.classList.remove('hidden');
         renderChatList(container, '', 0);
@@ -671,7 +594,6 @@ function buildManagerUI() {
 // =========================
 // Welcome Page Injection
 // =========================
-
 function injectIntoWelcomePage() {
     const chatEl = document.getElementById('chat');
     if (!chatEl) return false;
