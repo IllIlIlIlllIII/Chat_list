@@ -400,10 +400,11 @@ body.hideChatAvatars .cm-group-preview {
     display: inline-flex;
     align-items: center;
     gap: 3px;
-    font-size: calc(var(--mainFontSize, 15px) * 0.75);
+    font-size: calc(var(--mainFontSize, 15px) * 0.5);
     color: var(--SmartThemeBodyColor, #999);
     opacity: 0.7;
     white-space: nowrap;
+    text-align: center;
 }
 
 .cm-meta-badge i {
