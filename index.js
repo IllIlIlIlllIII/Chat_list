@@ -424,33 +424,7 @@ const refreshCallback = async () => {
         await renderChatList(container, filter, offset);
     };
 
-    
-    // --- 100% 안전한 날짜 구분선 로직 ---
-    let lastDateStr = '';
-
-    page.forEach(chat => {
-        // 1. 에러가 나지 않도록 기본 자바스크립트 Date 객체만 사용합니다.
-        const dateObj = chat.last_mes ? new Date(chat.last_mes) : new Date();
-        
-        // 2. 년, 월, 일을 뽑아서 텍스트로 만듭니다. (예: 2026년 06월 19일)
-        const year = dateObj.getFullYear();
-        const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-        const day = String(dateObj.getDate()).padStart(2, '0');
-        const dateStr = `${year}년 ${month}월 ${day}일`;
-
-        // 3. 날짜가 바뀌었으면 구분선 추가
-        if (dateStr !== lastDateStr) {
-            const separator = document.createElement('div');
-            separator.className = 'cm-date-separator'; 
-            separator.textContent = dateStr;
-            target.appendChild(separator);
-            lastDateStr = dateStr;
-        }
-
-        // 4. 채팅방 렌더링
-        renderChatItem(chat, target, refreshCallback);
-    });
-    // --- 로직 끝
+    page.forEach(chat => renderChatItem(chat, target, refreshCallback));
 
     // Load more button
     // Load more button
