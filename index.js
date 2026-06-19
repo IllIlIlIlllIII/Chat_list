@@ -1,6 +1,6 @@
 // =========================
 // Chat_list - SillyTavern Extension
-// Replace the Welcome Page "Recent Chats" with a full chat manager.
+// Replace the Welcome Page "Recent Chats" with a full chat list.
 // List, rename, delete all chats — without entering them.
 // =========================
 import { getGroupAvatar, getGroupPastChats, groups, select_group_chats } from '../../../group-chats.js';
