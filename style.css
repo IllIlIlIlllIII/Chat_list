@@ -147,7 +147,7 @@
     width: 40px;
     height: 40px;
     min-width: 40px;
-    border-radius: 50%;
+    border-radius: 10%;
     object-fit: cover;
     flex-shrink: 0;
 }
@@ -157,7 +157,7 @@
     align-items: center;
     justify-content: center;
     overflow: hidden;
-    border-radius: 50%;
+    border-radius: 10%;
     width: 40px;
     height: 40px;
     min-width: 40px;
@@ -200,12 +200,8 @@
     display: flex;
     gap: 4px;
     flex-shrink: 0;
-    opacity: 0;
-    transition: opacity 0.15s;
-}
-
-.cm-chat-item:hover .cm-chat-actions {
     opacity: 1;
+    transition: opacity 0.15s;
 }
 
 .cm-action-btn {
