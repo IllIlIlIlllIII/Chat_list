@@ -89,6 +89,33 @@ async function deleteChat(chat) {
             });
             if (!response.ok) throw new Error('Failed to delete chat');
         }
+
+        // ── 삭제 후 정리 ──
+        // 1) 내부 캐시 무효화
+        cachedChats = null;
+
+        // 2) 현재 활성 채팅을 삭제한 경우 SillyTavern에 알림
+        const currentChatId = getCurrentChatId();
+        if (chat.file_name === currentChatId) {
+            // CHAT_CHANGED 이벤트를 발행하여 ST가 내부 상태를 리셋하도록 유도
+            if (eventSource && typeof eventSource.emit === 'function') {
+                eventSource.emit(event_types.CHAT_CHANGED, { chatId: null });
+            }
+        }
+
+        // 3) 채팅 목록 관련 이벤트 발행 (다른 UI가 갱신할 수 있도록)
+        if (eventSource && typeof eventSource.emit === 'function') {
+            try {
+                eventSource.emit(event_types.CHAT_DELETED, {
+                    chatId: chat.file_name,
+                    characterId: chat.characterId,
+                    isGroup: chat.isGroup,
+                });
+            } catch {
+                // CHAT_DELETED 이벤트가 없는 ST 버전에서는 무시
+            }
+        }
+
         return true;
     } catch (error) {
         console.error('[Chat_list] Delete failed:', error);
@@ -101,7 +128,50 @@ async function deleteChat(chat) {
 // UI State
 // =========================
 let cachedChats = null;
-let isInjected = false;
+
+// =========================
+// Date Grouping Helper
+// =========================
+
+/**
+ * 날짜 기준으로 채팅을 그룹핑하기 위한 라벨을 반환합니다.
+ * ChatPlus 방식 참고: 오늘, 어제, 이번 주, 이번 달, 이전 달별 그룹
+ */
+function getDateGroupLabel(date) {
+    if (!date) return t`Unknown`;
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    const chatDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+    if (chatDay.getTime() === today.getTime()) {
+        return t`Today`;
+    }
+    if (chatDay.getTime() === yesterday.getTime()) {
+        return t`Yesterday`;
+    }
+
+    // 이번 주 (일요일 시작 기준)
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - today.getDay());
+    if (chatDay >= weekStart) {
+        return t`This Week`;
+    }
+
+    // 이번 달
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    if (chatDay >= monthStart) {
+        return t`This Month`;
+    }
+
+    // 그 이전: "YYYY년 M월" 형태
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+    return `${year}년 ${month}월`;
+}
 
 // =========================
 // UI Rendering
@@ -414,19 +484,21 @@ async function renderChatList(container, filter = '', offset = 0) {
         await renderChatList(container, filter, offset);
     };
 
-   const refreshCallback = async () => {
-        cachedChats = null;
-        await renderChatList(container, filter, offset);
-    };
+    // ── 날짜 구분선을 삽입하며 채팅 아이템 렌더링 ──
+    let lastGroupLabel = null;
 
-const refreshCallback = async () => {
-        cachedChats = null;
-        await renderChatList(container, filter, offset);
-    };
+    page.forEach(chat => {
+        const label = getDateGroupLabel(chat.last_mes);
+        if (label !== lastGroupLabel) {
+            lastGroupLabel = label;
+            const separator = document.createElement('div');
+            separator.className = 'cm-date-separator';
+            separator.textContent = label;
+            target.appendChild(separator);
+        }
+        renderChatItem(chat, target, refreshCallback);
+    });
 
-    page.forEach(chat => renderChatItem(chat, target, refreshCallback));
-
-    // Load more button
     // Load more button
     const loadMoreBtn = container.querySelector('#cm-load-more');
     if (loadMoreBtn) {
@@ -547,10 +619,6 @@ function buildManagerUI() {
 // Welcome Page Injection
 // =========================
 
-/**
- * Inject Chat_list into the Welcome Page's Recent Chats area.
- * Replaces .welcomeRecent content with the full chat manager UI.
- */
 function injectIntoWelcomePage() {
     const chatEl = document.getElementById('chat');
     if (!chatEl) return false;
@@ -558,58 +626,42 @@ function injectIntoWelcomePage() {
     const welcomePanel = chatEl.querySelector('.welcomePanel');
     if (!welcomePanel) return false;
 
-    // Find the .welcomeRecent container
     let welcomeRecent = welcomePanel.querySelector('.welcomeRecent');
     if (!welcomeRecent) {
-        // If welcomeRecent doesn't exist yet, create it
         welcomeRecent = document.createElement('div');
         welcomeRecent.className = 'welcomeRecent';
         welcomePanel.appendChild(welcomeRecent);
     }
 
-    // Check if we already injected
     if (welcomeRecent.querySelector('#cm-container')) return true;
 
-    // Clear original Recent Chats content
     welcomeRecent.innerHTML = '';
 
-    // Build and inject our UI
     const ui = buildManagerUI();
     welcomeRecent.appendChild(ui);
 
-    // Start loading chats
     renderChatList(ui, '', 0);
 
     return true;
 }
 
-/**
- * Observe DOM changes to detect when the Welcome Page is rendered.
- * The welcome panel is dynamically inserted into #chat, so we watch for it.
- */
 function setupWelcomePageObserver() {
     const chatEl = document.getElementById('chat');
     if (!chatEl) {
-        // Retry after a short delay if #chat isn't ready yet
         setTimeout(setupWelcomePageObserver, 500);
         return;
     }
 
-    // Try to inject immediately if welcome page is already there
     injectIntoWelcomePage();
 
-    // Observe for future welcome page renders
     const observer = new MutationObserver((mutations) => {
         for (const mutation of mutations) {
             for (const node of mutation.addedNodes) {
                 if (node.nodeType !== Node.ELEMENT_NODE) continue;
-                // Check if a welcomePanel was added
                 if (node.classList?.contains('welcomePanel') || node.querySelector?.('.welcomePanel')) {
-                    // Small delay to let the template finish rendering
                     setTimeout(() => injectIntoWelcomePage(), 50);
                     return;
                 }
-                // Also check for .mes elements that might contain welcomePanel
                 if (node.classList?.contains('mes') && node.querySelector?.('.welcomePanel')) {
                     setTimeout(() => injectIntoWelcomePage(), 50);
                     return;
