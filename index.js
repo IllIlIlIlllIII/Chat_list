@@ -228,10 +228,10 @@ if (chat.messageCount != null) {
     metaRow.appendChild(msgBadge);
 }
 
-if (chat.fileSize != null) {
+if (chat.fileSize) {
     const sizeBadge = document.createElement('span');
     sizeBadge.className = 'cm-meta-badge';
-    sizeBadge.innerHTML = '<i class="fa-solid fa-file fa-xs"></i> ' + formatFileSize(chat.fileSize);
+    sizeBadge.innerHTML = '<i class="fa-solid fa-file fa-xs"></i> ' + chat.fileSize;
     sizeBadge.title = t`File size`;
     metaRow.appendChild(sizeBadge);
 }
@@ -239,7 +239,7 @@ if (chat.fileSize != null) {
 if (metaRow.children.length > 0) {
     info.appendChild(metaRow);
 }
-
+//
 
     const bottomRow = document.createElement('div');
     bottomRow.className = 'cm-chat-bottom';
@@ -471,7 +471,10 @@ async function fetchAllChats() {
     const messageCount = stat?.chat_size ?? stat?.msg_count ?? stat?.message_count ?? null;
     const fileSize = stat?.file_size ?? null;
 
-    return { ...chat, stat, last_mes: lastMesDate, messageCount, fileSize };
+    // ★ 메시지 수 & 파일 용량 추출 (서버가 반환하는 실제 필드명)
+const messageCount = stat?.chat_items ?? null;
+const fileSize = stat?.file_size ?? null;  // 이미 "1.3 MB" 같은 문자열
+return { ...chat, stat, last_mes: lastMesDate, messageCount, fileSize };
 });
 
 allChats.sort((a, b) => b.last_mes - a.last_mes);
