@@ -24,6 +24,13 @@ const {
 const MODULE_NAME = 'Chat_list';
 const MAX_CHATS_PER_PAGE = 100;
 
+function formatFileSize(bytes) {
+    if (bytes == null || isNaN(bytes)) return '—';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+}
+
 // =========================
 // Settings
 // =========================
@@ -208,6 +215,31 @@ function renderChatItem(chat, container, refreshCallback) {
     nameRow.textContent = prefix + chat.character + ': ' + chat.file_name;
     nameRow.title = chat.character + ': ' + chat.file_name;
     info.appendChild(nameRow);
+
+    // ★ 메시지 수 / 파일 용량 메타 정보
+const metaRow = document.createElement('div');
+metaRow.className = 'cm-chat-meta';
+
+if (chat.messageCount != null) {
+    const msgBadge = document.createElement('span');
+    msgBadge.className = 'cm-meta-badge';
+    msgBadge.innerHTML = '<i class="fa-solid fa-message fa-xs"></i> ' + chat.messageCount;
+    msgBadge.title = t`Messages`;
+    metaRow.appendChild(msgBadge);
+}
+
+if (chat.fileSize != null) {
+    const sizeBadge = document.createElement('span');
+    sizeBadge.className = 'cm-meta-badge';
+    sizeBadge.innerHTML = '<i class="fa-solid fa-file fa-xs"></i> ' + formatFileSize(chat.fileSize);
+    sizeBadge.title = t`File size`;
+    metaRow.appendChild(sizeBadge);
+}
+
+if (metaRow.children.length > 0) {
+    info.appendChild(metaRow);
+}
+
 
     const bottomRow = document.createElement('div');
     bottomRow.className = 'cm-chat-bottom';
@@ -424,7 +456,6 @@ async function fetchAllChats() {
         const m = timestampToMoment(stat.last_mes);
         if (m && m.isValid()) lastMesDate = m.toDate();
     }
-    // ★ last_mes가 없으면 file_name에서 타임스탬프 추출 시도
     if (!lastMesDate) {
         const match = chat.file_name.match(/(\d{4}-\d{1,2}-\d{1,2})/);
         if (match) {
@@ -432,12 +463,17 @@ async function fetchAllChats() {
             if (!isNaN(parsed.getTime())) lastMesDate = parsed;
         }
     }
-    // ★ 그래도 없으면 현재 시각을 fallback으로 사용
     if (!lastMesDate) {
-        lastMesDate = new Date(0); // 1970-01-01 → 목록 맨 아래에 배치
+        lastMesDate = new Date(0);
     }
-    return { ...chat, stat, last_mes: lastMesDate };
+
+    // ★ 메시지 수 & 파일 용량 추출
+    const messageCount = stat?.chat_size ?? stat?.msg_count ?? stat?.message_count ?? null;
+    const fileSize = stat?.file_size ?? null;
+
+    return { ...chat, stat, last_mes: lastMesDate, messageCount, fileSize };
 });
+
 allChats.sort((a, b) => b.last_mes - a.last_mes);
     cachedChats = allChats;
     return allChats;
