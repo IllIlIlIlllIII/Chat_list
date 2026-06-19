@@ -1,5 +1,5 @@
 // =========================
-// ChatManager - SillyTavern Extension
+// Chat_list - SillyTavern Extension
 // Replace the Welcome Page "Recent Chats" with a full chat manager.
 // List, rename, delete all chats — without entering them.
 // =========================
@@ -21,7 +21,7 @@ const {
     eventSource
 } = SillyTavern.getContext();
 
-const MODULE_NAME = 'chatManager';
+const MODULE_NAME = 'Chat_list';
 const MAX_CHATS_PER_PAGE = 100;
 
 // =========================
@@ -49,7 +49,7 @@ async function getListOfCharacterChats(avatar) {
         if (!Array.isArray(data)) return [];
         return data.map(x => String(x.file_name).replace('.jsonl', ''));
     } catch (error) {
-        console.warn('[ChatManager] Failed to get character chats:', error);
+        console.warn('[Chat_list] Failed to get character chats:', error);
         return [];
     }
 }
@@ -91,7 +91,7 @@ async function deleteChat(chat) {
         }
         return true;
     } catch (error) {
-        console.error('[ChatManager] Delete failed:', error);
+        console.error('[Chat_list] Delete failed:', error);
         toastr.error('Failed to delete chat.');
         return false;
     }
@@ -335,7 +335,7 @@ async function fetchAllChats() {
             groupChats = results.flat();
         }
     } catch (e) {
-        console.warn('[ChatManager] Failed to load group chats:', e);
+        console.warn('[Chat_list] Failed to load group chats:', e);
     }
 
     const charChatLists = await Promise.all(chatListPromises);
@@ -537,7 +537,7 @@ function buildManagerUI() {
 // =========================
 
 /**
- * Inject ChatManager into the Welcome Page's Recent Chats area.
+ * Inject Chat_list into the Welcome Page's Recent Chats area.
  * Replaces .welcomeRecent content with the full chat manager UI.
  */
 function injectIntoWelcomePage() {
@@ -629,7 +629,7 @@ function renderExtensionSettings() {
     toggle.classList.add('inline-drawer-toggle', 'inline-drawer-header');
 
     const title = document.createElement('b');
-    title.textContent = 'ChatManager';
+    title.textContent = 'Chat_list';
     const icon = document.createElement('div');
     icon.classList.add('inline-drawer-icon', 'fa-solid', 'fa-circle-chevron-down', 'down');
     toggle.append(title, icon);
@@ -647,7 +647,7 @@ function renderExtensionSettings() {
         context.saveSettingsDebounced();
     });
     const span = document.createElement('span');
-    span.textContent = t`Enable ChatManager (needs reload)`;
+    span.textContent = t`Enable Chat_list (needs reload)`;
     label.append(checkbox, span);
     content.appendChild(label);
 
