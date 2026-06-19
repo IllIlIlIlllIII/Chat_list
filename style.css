@@ -349,23 +349,6 @@
     display: none;
 }
 
-.cm-chat-item {
-    position: relative; /* 기준점 설정 */
-}
-
-/* 연필 버튼을 강제로 왼쪽으로 당겨옴 */
-.cm-chat-actions .cm-rename-btn {
-    position: absolute;
-    left: 55px; /* 아바타(40) + 여백(15) 위치쯤에 강제 고정 */
-    top: 50%;
-    transform: translateY(-50%); /* 세로 중앙 정렬 */
-}
-
-/* 텍스트가 연필과 겹치지 않도록 글자 시작 위치를 밀어냄 */
-.cm-chat-info {
-    margin-left: 32px; 
-}
-
 /* Hide avatars when ST setting active */
 body.hideChatAvatars .cm-preview-img,
 body.hideChatAvatars .cm-group-preview {
