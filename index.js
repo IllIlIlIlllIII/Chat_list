@@ -419,6 +419,8 @@ async function renderChatList(container, filter = '', offset = 0) {
         await renderChatList(container, filter, offset);
     };
 
+page.forEach(chat => renderChatItem(chat, target, refreshCallback));
+    
     // --- 날짜 구분선 로직 추가 시작 ---
     let lastDateStr = '';
 
