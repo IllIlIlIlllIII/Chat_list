@@ -239,7 +239,6 @@ if (chat.fileSize) {
 if (metaRow.children.length > 0) {
     info.appendChild(metaRow);
 }
-//
 
     const bottomRow = document.createElement('div');
     bottomRow.className = 'cm-chat-bottom';
@@ -466,10 +465,6 @@ async function fetchAllChats() {
     if (!lastMesDate) {
         lastMesDate = new Date(0);
     }
-
-    // ★ 메시지 수 & 파일 용량 추출
-    const messageCount = stat?.chat_size ?? stat?.msg_count ?? stat?.message_count ?? null;
-    const fileSize = stat?.file_size ?? null;
 
     // ★ 메시지 수 & 파일 용량 추출 (서버가 반환하는 실제 필드명)
 const messageCount = stat?.chat_items ?? null;
