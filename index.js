@@ -418,16 +418,27 @@ async function fetchAllChats() {
     chatStatsMap = Object.fromEntries(statsEntries);
 
     allChats = allChats.map(chat => {
-        const stat = chatStatsMap[chat.characterId + ':' + chat.file_name];
-        let lastMesDate = null;
-        if (stat && stat.last_mes) {
-            const m = timestampToMoment(stat.last_mes);
-            if (m && m.isValid()) lastMesDate = m.toDate();
+    const stat = chatStatsMap[chat.characterId + ':' + chat.file_name];
+    let lastMesDate = null;
+    if (stat && stat.last_mes) {
+        const m = timestampToMoment(stat.last_mes);
+        if (m && m.isValid()) lastMesDate = m.toDate();
+    }
+    // ★ last_mes가 없으면 file_name에서 타임스탬프 추출 시도
+    if (!lastMesDate) {
+        const match = chat.file_name.match(/(\d{4}-\d{1,2}-\d{1,2})/);
+        if (match) {
+            const parsed = new Date(match[1]);
+            if (!isNaN(parsed.getTime())) lastMesDate = parsed;
         }
-        return { ...chat, stat, last_mes: lastMesDate };
-    }).filter(chat => chat.last_mes);
-
-    allChats.sort((a, b) => b.last_mes - a.last_mes);
+    }
+    // ★ 그래도 없으면 현재 시각을 fallback으로 사용
+    if (!lastMesDate) {
+        lastMesDate = new Date(0); // 1970-01-01 → 목록 맨 아래에 배치
+    }
+    return { ...chat, stat, last_mes: lastMesDate };
+});
+allChats.sort((a, b) => b.last_mes - a.last_mes);
     cachedChats = allChats;
     return allChats;
 }
