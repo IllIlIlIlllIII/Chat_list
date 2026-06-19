@@ -1,27 +1,29 @@
-/* ChatManager Extension Styles */
-/* Injected into Welcome Page's .welcomeRecent area */
+/* ===== Chat_list Extension Styles ===== */
 
-/* Container */
 #cm-container {
     display: flex;
     flex-direction: column;
     gap: 8px;
     width: 100%;
+    padding: 8px;
+    box-sizing: border-box;
 }
 
-/* Title */
+/* Title row */
 .cm-title-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    margin-bottom: 4px;
 }
 
 .cm-title {
     font-size: calc(var(--mainFontSize, 15px) * 1.15);
     font-weight: 600;
+    color: var(--SmartThemeBodyColor, #ccc);
 }
 
-/* Filter row */
+/* Filter */
 .cm-filter-row {
     display: flex;
     gap: 6px;
@@ -75,6 +77,7 @@
     color: var(--SmartThemeBodyColor, #888);
     opacity: 0.7;
     padding: 0 2px;
+    white-space: nowrap;
 }
 
 /* Loader */
@@ -98,7 +101,26 @@
     width: 100%;
 }
 
-/* Chat item — matches .welcomeRecent .recentChat style */
+/* Date separator — from reference */
+.cm-date-separator {
+    font-weight: 600;
+    font-size: calc(var(--mainFontSize, 15px) * 1.05);
+    margin: 8px 0 2px 0;
+    padding: 4px 10px 2px 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    border-radius: 0;
+    color: var(--SmartThemeBodyColor, #ccc);
+    border-bottom: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 25%, transparent);
+}
+
+.cm-date-separator:first-of-type {
+    margin-top: 16px;
+}
+
+/* Chat item */
 .cm-chat-item {
     display: flex;
     align-items: center;
@@ -112,15 +134,15 @@
 }
 
 .cm-chat-item:hover {
-    background-color: var(--white30a, rgba(255,255,255,0.05));
+    background-color: var(--white30a, rgba(255, 255, 255, 0.05));
 }
 
 .cm-chat-item.cm-current {
     border-left: 3px solid var(--SmartThemeQuoteColor, #7b68ee);
-    background-color: var(--white30a, rgba(123,104,238,0.08));
+    background-color: var(--white30a, rgba(123, 104, 238, 0.08));
 }
 
-/* Preview image */
+/* Avatar — from reference */
 .cm-preview-img {
     width: 40px;
     height: 40px;
@@ -136,6 +158,10 @@
     justify-content: center;
     overflow: hidden;
     border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    flex-shrink: 0;
 }
 
 /* Chat info */
@@ -157,12 +183,6 @@
     white-space: nowrap;
 }
 
-.cm-chat-bottom {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
 .cm-chat-message {
     font-size: calc(var(--mainFontSize, 15px) * 0.85);
     color: var(--SmartThemeBodyColor, #888);
@@ -170,8 +190,8 @@
     overflow: hidden;
     display: -webkit-box;
     -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
     flex: 1;
 }
 
@@ -200,8 +220,13 @@
 }
 
 .cm-action-btn:hover {
-    background: var(--white30a, rgba(255,255,255,0.1));
+    background: var(--white30a, rgba(255, 255, 255, 0.1));
     color: var(--SmartThemeEmColor, #fff);
+}
+
+.cm-rename-btn:hover {
+    color: var(--SmartThemeQuoteColor, #7b68ee);
+    border-color: var(--SmartThemeQuoteColor, #7b68ee);
 }
 
 .cm-delete-btn:hover {
@@ -209,16 +234,101 @@
     border-color: #e74c3c;
 }
 
-/* Delete preview in popup */
-.cm-delete-preview {
+/* Inline rename input */
+.cm-rename-input {
+    font-size: calc(var(--mainFontSize, 15px) * 1);
+    font-weight: 500;
+    color: var(--SmartThemeBodyColor, #ddd);
+    background: var(--SmartThemeBlurTintColor, #1a1a2e);
+    border: 1px solid var(--SmartThemeQuoteColor, #7b68ee);
+    border-radius: 4px;
+    padding: 2px 6px;
+    width: 100%;
+    outline: none;
+}
+
+/* Delete confirmation popup */
+.cm-delete-popup-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 99999;
+}
+
+.cm-delete-popup {
+    background: var(--SmartThemeBlurTintColor, #1e1e2e);
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 12px;
+    padding: 20px 24px;
+    min-width: 300px;
+    max-width: 420px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.cm-delete-popup h3 {
+    margin: 0;
+    font-size: calc(var(--mainFontSize, 15px) * 1.1);
+    color: var(--SmartThemeBodyColor, #ddd);
+}
+
+.cm-delete-popup p {
+    margin: 0;
+    font-size: calc(var(--mainFontSize, 15px) * 0.95);
+    color: var(--SmartThemeBodyColor, #aaa);
+}
+
+.cm-delete-popup-preview {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin: 12px 0;
     padding: 8px;
     border-radius: 10px;
-    background: var(--SmartThemeBlurTintColor, rgba(255,255,255,0.05));
+    background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--SmartThemeBorderColor, #444);
+}
+
+.cm-delete-popup-btns {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.cm-popup-btn {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    cursor: pointer;
+    font-size: calc(var(--mainFontSize, 15px) * 0.9);
+    transition: all 0.15s;
+}
+
+.cm-popup-btn-cancel {
+    background: none;
+    color: var(--SmartThemeBodyColor, #aaa);
+}
+
+.cm-popup-btn-cancel:hover {
+    background: var(--white30a, rgba(255, 255, 255, 0.05));
+}
+
+.cm-popup-btn-delete {
+    background: #e74c3c;
+    color: #fff;
+    border-color: #e74c3c;
+}
+
+.cm-popup-btn-delete:hover {
+    background: #c0392b;
 }
 
 /* Load more */
@@ -235,7 +345,7 @@
 }
 
 .cm-load-more:hover {
-    background: var(--white30a, rgba(255,255,255,0.05));
+    background: var(--white30a, rgba(255, 255, 255, 0.05));
     color: var(--SmartThemeEmColor, #fff);
 }
 
@@ -243,7 +353,8 @@
     display: none;
 }
 
-/* Responsive: hide avatars when ST hides them */
-body.hideChatAvatars .cm-preview-img {
+/* Hide avatars when ST setting active */
+body.hideChatAvatars .cm-preview-img,
+body.hideChatAvatars .cm-group-preview {
     display: none;
 }
