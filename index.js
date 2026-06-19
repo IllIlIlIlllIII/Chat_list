@@ -419,37 +419,38 @@ async function renderChatList(container, filter = '', offset = 0) {
         await renderChatList(container, filter, offset);
     };
 
-page.forEach(chat => renderChatItem(chat, target, refreshCallback));
+const refreshCallback = async () => {
+        cachedChats = null;
+        await renderChatList(container, filter, offset);
+    };
+
     
-    // --- 날짜 구분선 로직 추가 시작 ---
+    // --- 100% 안전한 날짜 구분선 로직 ---
     let lastDateStr = '';
 
     page.forEach(chat => {
-        // 1. 채팅방의 마지막 대화 시간 가져오기
-        let timestamp = Date.now();
-        if (chat.last_mes) {
-            timestamp = chat.last_mes.getTime(); // 정렬할 때 만들어둔 Date 객체 사용
-        } else if (chat.stat && chat.stat.create_date) {
-            timestamp = chat.stat.create_date;
-        }
+        // 1. 에러가 나지 않도록 기본 자바스크립트 Date 객체만 사용합니다.
+        const dateObj = chat.last_mes ? new Date(chat.last_mes) : new Date();
+        
+        // 2. 년, 월, 일을 뽑아서 텍스트로 만듭니다. (예: 2026년 06월 19일)
+        const year = dateObj.getFullYear();
+        const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const day = String(dateObj.getDate()).padStart(2, '0');
+        const dateStr = `${year}년 ${month}월 ${day}일`;
 
-        // 2. 날짜 텍스트로 변환 (예: 2026년 6월 19일)
-        const dateStr = timestampToMoment(timestamp).format('YYYY년 MM월 DD일');
-
-        // 3. 날짜가 바뀌었으면 구분선 추가하기
+        // 3. 날짜가 바뀌었으면 구분선 추가
         if (dateStr !== lastDateStr) {
             const separator = document.createElement('div');
-            // 올려주신 CSS에 맞춰 cm-date-separator 클래스 사용
             separator.className = 'cm-date-separator'; 
             separator.textContent = dateStr;
             target.appendChild(separator);
             lastDateStr = dateStr;
         }
 
-        // 4. 기존처럼 채팅방 아이템 화면에 그리기
+        // 4. 채팅방 렌더링
         renderChatItem(chat, target, refreshCallback);
     });
-    // --- 날짜 구분선 로직 추가 끝 ---
+    // --- 로직 끝
 
     // Load more button
     // Load more button
