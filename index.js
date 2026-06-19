@@ -414,8 +414,42 @@ async function renderChatList(container, filter = '', offset = 0) {
         await renderChatList(container, filter, offset);
     };
 
-    page.forEach(chat => renderChatItem(chat, target, refreshCallback));
+   const refreshCallback = async () => {
+        cachedChats = null;
+        await renderChatList(container, filter, offset);
+    };
 
+    // --- 날짜 구분선 로직 추가 시작 ---
+    let lastDateStr = '';
+
+    page.forEach(chat => {
+        // 1. 채팅방의 마지막 대화 시간 가져오기
+        let timestamp = Date.now();
+        if (chat.last_mes) {
+            timestamp = chat.last_mes.getTime(); // 정렬할 때 만들어둔 Date 객체 사용
+        } else if (chat.stat && chat.stat.create_date) {
+            timestamp = chat.stat.create_date;
+        }
+
+        // 2. 날짜 텍스트로 변환 (예: 2026년 6월 19일)
+        const dateStr = timestampToMoment(timestamp).format('YYYY년 MM월 DD일');
+
+        // 3. 날짜가 바뀌었으면 구분선 추가하기
+        if (dateStr !== lastDateStr) {
+            const separator = document.createElement('div');
+            // 올려주신 CSS에 맞춰 cm-date-separator 클래스 사용
+            separator.className = 'cm-date-separator'; 
+            separator.textContent = dateStr;
+            target.appendChild(separator);
+            lastDateStr = dateStr;
+        }
+
+        // 4. 기존처럼 채팅방 아이템 화면에 그리기
+        renderChatItem(chat, target, refreshCallback);
+    });
+    // --- 날짜 구분선 로직 추가 끝 ---
+
+    // Load more button
     // Load more button
     const loadMoreBtn = container.querySelector('#cm-load-more');
     if (loadMoreBtn) {
