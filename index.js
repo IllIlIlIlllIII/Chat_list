@@ -476,13 +476,66 @@ async function renderChatList(container, filter = '', offset = 0) {
     const page = filtered.slice(offset, offset + MAX_CHATS_PER_PAGE);
 
     const listContainer = container.querySelector('#cm-list');
-    if (listContainer) listContainer.innerHTML = '';
     const target = listContainer || container;
+
+    // ★ 핵심 변경: offset이 0일 때만 목록 초기화 (필터 변경, 새로고침 등)
+    //    offset > 0이면 "Load More"이므로 기존 목록을 유지
+    if (offset === 0 && target) {
+        target.innerHTML = '';
+    }
 
     const refreshCallback = async () => {
         cachedChats = null;
-        await renderChatList(container, filter, offset);
+        await renderChatList(container, filter, 0);
     };
+
+    // ── 날짜 구분선을 삽입하며 채팅 아이템 렌더링 ──
+    // ★ 이미 렌더링된 마지막 날짜 그룹 라벨을 가져옴
+    let lastGroupLabel = null;
+    if (offset > 0) {
+        const existingSeparators = target.querySelectorAll('.cm-date-separator');
+        if (existingSeparators.length > 0) {
+            lastGroupLabel = existingSeparators[existingSeparators.length - 1].textContent;
+        }
+    }
+
+    page.forEach(chat => {
+        const label = getDateGroupLabel(chat.last_mes);
+        if (label !== lastGroupLabel) {
+            lastGroupLabel = label;
+            const separator = document.createElement('div');
+            separator.className = 'cm-date-separator';
+            separator.textContent = label;
+            target.appendChild(separator);
+        }
+        renderChatItem(chat, target, refreshCallback);
+    });
+
+    // Load more button
+    const loadMoreBtn = container.querySelector('#cm-load-more');
+    if (loadMoreBtn) {
+        if (offset + MAX_CHATS_PER_PAGE < total) {
+            loadMoreBtn.classList.remove('hidden');
+            loadMoreBtn.onclick = async () => {
+                // ★ 다음 페이지를 이어 붙이기
+                await renderChatList(container, filter, offset + MAX_CHATS_PER_PAGE);
+            };
+        } else {
+            loadMoreBtn.classList.add('hidden');
+        }
+    }
+
+    // Chat count display
+    const countEl = container.querySelector('#cm-count');
+    if (countEl) {
+        countEl.textContent = t`Total` + ': ' + total + (filter ? (' (' + t`filtered` + ')') : '');
+    }
+
+    // Hide loader
+    const loader = container.querySelector('#cm-loader');
+    if (loader) loader.classList.add('hidden');
+}
+
 
     // ── 날짜 구분선을 삽입하며 채팅 아이템 렌더링 ──
     let lastGroupLabel = null;
