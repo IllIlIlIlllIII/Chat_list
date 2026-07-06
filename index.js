@@ -340,26 +340,40 @@ function renderChatItem(chat, container, refreshCallback) {
     item.appendChild(actions);
     container.appendChild(item);
 
-    // [FIX] 클릭 핸들러를 단일 경로로 통합
-    // 기존: setActiveGroup + select_group_chats 호출 후 openChatById도 호출 → 그룹 채팅 이중 실행
-    //       캐릭터 채팅도 openChatById 내부에서 context.groupId 잔재로 openGroupChat이 잘못 호출될 수 있었음
-    // 수정: 그룹은 openGroupChat 직접 호출, 캐릭터는 selectCharacterById + openCharacterChat 직접 호출
-    //       openChatById를 거치지 않으므로 컨텍스트 오판 없음
-    item.addEventListener('click', async (e) => {
+item.addEventListener('click', async (e) => {
         if (e.target.closest('.cm-action-btn')) return;
-        const ctx = SillyTavern.getContext();
+        let ctx = SillyTavern.getContext();
+        const currentChatId = getCurrentChatId();
+
+        // [FIX] 이미 열려있는 채팅을 다시 클릭 시 불필요한 재로드 방지
+        // 기존: 현재 활성 채팅과 동일해도 무조건 openGroupChat/openCharacterChat 호출 → 1초 내 재로드 발생
+        // 수정: 그룹/캐릭터 id + 현재 chatId가 모두 일치하면 아무 동작 없이 종료
+        if (chat.isGroup) {
+            if (String(ctx.groupId) === String(chat.characterId) && currentChatId === chat.file_name) {
+                return;
+            }
+        } else {
+            if (!ctx.groupId && String(ctx.characterId) === String(chat.characterId) && currentChatId === chat.file_name) {
+                return;
+            }
+        }
 
         if (chat.isGroup) {
             const group = groups.find(g => g.id === chat.characterId);
             if (!group) return;
-            // openGroupChat 하나로 처리 (setActiveGroup + select_group_chats 중복 호출 제거)
             await openGroupChat(group.id, chat.file_name);
         } else {
-            if (String(ctx.characterId) !== String(chat.characterId)) {
+            // 그룹에 있다가 캐릭터로 넘어오는 경우도 포함해서 characterId 불일치 체크
+            if (ctx.groupId || String(ctx.characterId) !== String(chat.characterId)) {
                 await selectCharacterById(chat.characterId);
-                await new Promise(r => setTimeout(r, 200)); // 150 → 200ms: 캐릭터 전환 완료 여유
+                await new Promise(r => setTimeout(r, 200)); // 캐릭터 전환 완료 여유
             }
-            await openCharacterChat(chat.file_name);
+
+            // [FIX] selectCharacterById가 캐릭터 전환 시 마지막 활성 채팅을 자동 로드하는 경우가 있음.
+            // 원하는 채팅이 이미 로드돼 있다면 openCharacterChat을 또 호출하지 않아 이중 로드(재로드) 방지
+            if (getCurrentChatId() !== chat.file_name) {
+                await openCharacterChat(chat.file_name);
+            }
         }
     });
 }
@@ -671,20 +685,24 @@ function setupWelcomePageObserver() {
 
     injectIntoWelcomePage();
 
-    // [FIX] Observer 중복 실행 방지
-    // 기존: 채팅 열고 닫을 때마다 DOM 변경 감지 → injectIntoWelcomePage 중복 호출 가능
-    // 수정: injecting 플래그로 타이머 중복 실행 차단
+    // [FIX] Observer 중복 실행 및 자기 트리거 방지
+    // 기존: injecting 플래그로 콜백 내부 로직만 막았지만, MutationObserver 콜백은 비동기(microtask)로 실행되기 때문에
+    //       injecting = false로 돌아온 이후에 자기 자신이 만든 mutation이 뒤늦게 처리될 여지가 있었음
+    // 수정: 주입 시작 시 observer.disconnect()로 관찰 자체를 끊고, 주입이 끝난 뒤 다시 observe() 재개
     let injecting = false;
     const observer = new MutationObserver((mutations) => {
         if (injecting) return;
         for (const mutation of mutations) {
             for (const node of mutation.addedNodes) {
                 if (node.nodeType !== Node.ELEMENT_NODE) continue;
+                if (node.id === 'cm-container' || node.querySelector?.('#cm-container')) continue; // 자기 자신 삽입은 무시
                 if (node.classList?.contains('welcomePanel') || node.querySelector?.('.welcomePanel')) {
                     injecting = true;
+                    observer.disconnect();
                     setTimeout(() => {
                         injectIntoWelcomePage();
                         injecting = false;
+                        observer.observe(chatEl, { childList: true, subtree: true });
                     }, 50);
                     return;
                 }
