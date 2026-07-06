@@ -64,14 +64,15 @@ async function getListOfCharacterChats(avatar) {
 // =========================
 // Chat Actions
 // =========================
+
+// [FIX] openChatById 단순화
+// 기존: context.groupId 잔재가 남아있으면 캐릭터 채팅도 openGroupChat으로 잘못 분기 → 이중 실행
+// 수정: isGroup 플래그만 보고 분기, 컨텍스트 상태에 의존하지 않음
 async function openChatById(chatId, isGroup = false, groupId = null) {
-    const context = SillyTavern.getContext();
     if (!chatId) return;
     if (isGroup && groupId && typeof openGroupChat === 'function') {
         await openGroupChat(groupId, chatId);
-    } else if (context.groupId && typeof openGroupChat === 'function') {
-        await openGroupChat(context.groupId, chatId);
-    } else if (context.characterId !== undefined && typeof openCharacterChat === 'function') {
+    } else if (!isGroup && typeof openCharacterChat === 'function') {
         await openCharacterChat(chatId);
     }
 }
@@ -97,16 +98,13 @@ async function deleteChat(chat) {
             if (!response.ok) throw new Error('Failed to delete chat');
         }
 
-        cachedChats = null;
-
-        const currentChatId = getCurrentChatId();
-        if (chat.file_name === currentChatId) {
-            if (eventSource && typeof eventSource.emit === 'function') {
+        // [FIX] emit 먼저 완료한 뒤 캐시 무효화
+        // 기존: cachedChats = null을 emit 전에 해서 이벤트 핸들러가 빈 캐시로 재요청 충돌
+        if (eventSource && typeof eventSource.emit === 'function') {
+            const currentChatId = getCurrentChatId();
+            if (chat.file_name === currentChatId) {
                 eventSource.emit(event_types.CHAT_CHANGED, { chatId: null });
             }
-        }
-
-        if (eventSource && typeof eventSource.emit === 'function') {
             try {
                 eventSource.emit(event_types.CHAT_DELETED, {
                     chatId: chat.file_name,
@@ -117,6 +115,8 @@ async function deleteChat(chat) {
                 // CHAT_DELETED 이벤트가 없는 ST 버전에서는 무시
             }
         }
+
+        cachedChats = null; // emit 완료 후 무효화
 
         return true;
     } catch (error) {
@@ -216,29 +216,28 @@ function renderChatItem(chat, container, refreshCallback) {
     nameRow.title = chat.character + ': ' + chat.file_name;
     info.appendChild(nameRow);
 
-    // ★ 메시지 수 / 파일 용량 메타 정보
-const metaRow = document.createElement('div');
-metaRow.className = 'cm-chat-meta';
+    const metaRow = document.createElement('div');
+    metaRow.className = 'cm-chat-meta';
 
-if (chat.messageCount != null) {
-    const msgBadge = document.createElement('span');
-    msgBadge.className = 'cm-meta-badge';
-    msgBadge.innerHTML = '<i class="fa-solid fa-message fa-xs"></i> ' + chat.messageCount;
-    msgBadge.title = t`Messages`;
-    metaRow.appendChild(msgBadge);
-}
+    if (chat.messageCount != null) {
+        const msgBadge = document.createElement('span');
+        msgBadge.className = 'cm-meta-badge';
+        msgBadge.innerHTML = '<i class="fa-solid fa-message fa-xs"></i> ' + chat.messageCount;
+        msgBadge.title = t`Messages`;
+        metaRow.appendChild(msgBadge);
+    }
 
-if (chat.fileSize) {
-    const sizeBadge = document.createElement('span');
-    sizeBadge.className = 'cm-meta-badge';
-    sizeBadge.innerHTML = '<i class="fa-solid fa-file fa-xs"></i> ' + chat.fileSize;
-    sizeBadge.title = t`File size`;
-    metaRow.appendChild(sizeBadge);
-}
+    if (chat.fileSize) {
+        const sizeBadge = document.createElement('span');
+        sizeBadge.className = 'cm-meta-badge';
+        sizeBadge.innerHTML = '<i class="fa-solid fa-file fa-xs"></i> ' + chat.fileSize;
+        sizeBadge.title = t`File size`;
+        metaRow.appendChild(sizeBadge);
+    }
 
-if (metaRow.children.length > 0) {
-    info.appendChild(metaRow);
-}
+    if (metaRow.children.length > 0) {
+        info.appendChild(metaRow);
+    }
 
     const bottomRow = document.createElement('div');
     bottomRow.className = 'cm-chat-bottom';
@@ -330,7 +329,8 @@ if (metaRow.children.length > 0) {
         if (result === POPUP_RESULT.AFFIRMATIVE) {
             const success = await deleteChat(chat);
             if (success) {
-                cachedChats = null;
+                // [FIX] deleteChat 내부에서 이미 cachedChats = null 처리됨
+                // 기존: 여기서 한 번 더 null 해서 이중 무효화 → 중복 refresh 요청 유발
                 if (refreshCallback) await refreshCallback();
             }
         }
@@ -340,22 +340,26 @@ if (metaRow.children.length > 0) {
     item.appendChild(actions);
     container.appendChild(item);
 
+    // [FIX] 클릭 핸들러를 단일 경로로 통합
+    // 기존: setActiveGroup + select_group_chats 호출 후 openChatById도 호출 → 그룹 채팅 이중 실행
+    //       캐릭터 채팅도 openChatById 내부에서 context.groupId 잔재로 openGroupChat이 잘못 호출될 수 있었음
+    // 수정: 그룹은 openGroupChat 직접 호출, 캐릭터는 selectCharacterById + openCharacterChat 직접 호출
+    //       openChatById를 거치지 않으므로 컨텍스트 오판 없음
     item.addEventListener('click', async (e) => {
         if (e.target.closest('.cm-action-btn')) return;
         const ctx = SillyTavern.getContext();
+
         if (chat.isGroup) {
             const group = groups.find(g => g.id === chat.characterId);
-            if (group) {
-                setActiveGroup(group);
-                select_group_chats(group.id, true);
-                await openChatById(chat.file_name, true, group.id);
-            }
+            if (!group) return;
+            // openGroupChat 하나로 처리 (setActiveGroup + select_group_chats 중복 호출 제거)
+            await openGroupChat(group.id, chat.file_name);
         } else {
             if (String(ctx.characterId) !== String(chat.characterId)) {
                 await selectCharacterById(chat.characterId);
-                await new Promise(r => setTimeout(r, 150));
+                await new Promise(r => setTimeout(r, 200)); // 150 → 200ms: 캐릭터 전환 완료 여유
             }
-            await openChatById(chat.file_name);
+            await openCharacterChat(chat.file_name);
         }
     });
 }
@@ -449,36 +453,35 @@ async function fetchAllChats() {
     chatStatsMap = Object.fromEntries(statsEntries);
 
     allChats = allChats.map(chat => {
-    const stat = chatStatsMap[chat.characterId + ':' + chat.file_name];
-    let lastMesDate = null;
-    if (stat && stat.last_mes) {
-        const m = timestampToMoment(stat.last_mes);
-        if (m && m.isValid()) lastMesDate = m.toDate();
-    }
-    if (!lastMesDate) {
-        const match = chat.file_name.match(/(\d{4}-\d{1,2}-\d{1,2})/);
-        if (match) {
-            const parsed = new Date(match[1]);
-            if (!isNaN(parsed.getTime())) lastMesDate = parsed;
+        const stat = chatStatsMap[chat.characterId + ':' + chat.file_name];
+        let lastMesDate = null;
+        if (stat && stat.last_mes) {
+            const m = timestampToMoment(stat.last_mes);
+            if (m && m.isValid()) lastMesDate = m.toDate();
         }
-    }
-    if (!lastMesDate) {
-        lastMesDate = new Date(0);
-    }
+        if (!lastMesDate) {
+            const match = chat.file_name.match(/(\d{4}-\d{1,2}-\d{1,2})/);
+            if (match) {
+                const parsed = new Date(match[1]);
+                if (!isNaN(parsed.getTime())) lastMesDate = parsed;
+            }
+        }
+        if (!lastMesDate) {
+            lastMesDate = new Date(0);
+        }
 
-    // ★ 메시지 수 & 파일 용량 추출 (서버가 반환하는 실제 필드명)
-const messageCount = stat?.chat_items ?? null;
-const fileSize = stat?.file_size ?? null;  // 이미 "1.3 MB" 같은 문자열
-return { ...chat, stat, last_mes: lastMesDate, messageCount, fileSize };
-});
+        const messageCount = stat?.chat_items ?? null;
+        const fileSize = stat?.file_size ?? null;
+        return { ...chat, stat, last_mes: lastMesDate, messageCount, fileSize };
+    });
 
-allChats.sort((a, b) => b.last_mes - a.last_mes);
+    allChats.sort((a, b) => b.last_mes - a.last_mes);
     cachedChats = allChats;
     return allChats;
 }
 
 // =========================
-// List Rendering (★ 수정된 함수)
+// List Rendering
 // =========================
 async function renderChatList(container, filter = '', offset = 0) {
     const allChats = await fetchAllChats();
@@ -499,8 +502,6 @@ async function renderChatList(container, filter = '', offset = 0) {
     const listContainer = container.querySelector('#cm-list');
     const target = listContainer || container;
 
-    // ★ offset이 0일 때만 목록 초기화 (필터 변경, 새로고침 등)
-    //   offset > 0이면 "Load More"이므로 기존 목록 유지
     if (offset === 0) {
         target.innerHTML = '';
     }
@@ -510,7 +511,6 @@ async function renderChatList(container, filter = '', offset = 0) {
         await renderChatList(container, filter, 0);
     };
 
-    // ★ 이어 붙이기 시 기존 마지막 날짜 라벨을 이어받음
     let lastGroupLabel = null;
     if (offset > 0) {
         const existingSeparators = target.querySelectorAll('.cm-date-separator');
@@ -531,7 +531,6 @@ async function renderChatList(container, filter = '', offset = 0) {
         renderChatItem(chat, target, refreshCallback);
     });
 
-    // Load more button
     const loadMoreBtn = container.querySelector('#cm-load-more');
     if (loadMoreBtn) {
         if (offset + MAX_CHATS_PER_PAGE < total) {
@@ -544,13 +543,11 @@ async function renderChatList(container, filter = '', offset = 0) {
         }
     }
 
-    // Chat count
     const countEl = container.querySelector('#cm-count');
     if (countEl) {
         countEl.textContent = t`Total` + ': ' + total + (filter ? (' (' + t`filtered` + ')') : '');
     }
 
-    // Hide loader
     const loader = container.querySelector('#cm-loader');
     if (loader) loader.classList.add('hidden');
 }
@@ -674,16 +671,21 @@ function setupWelcomePageObserver() {
 
     injectIntoWelcomePage();
 
+    // [FIX] Observer 중복 실행 방지
+    // 기존: 채팅 열고 닫을 때마다 DOM 변경 감지 → injectIntoWelcomePage 중복 호출 가능
+    // 수정: injecting 플래그로 타이머 중복 실행 차단
+    let injecting = false;
     const observer = new MutationObserver((mutations) => {
+        if (injecting) return;
         for (const mutation of mutations) {
             for (const node of mutation.addedNodes) {
                 if (node.nodeType !== Node.ELEMENT_NODE) continue;
                 if (node.classList?.contains('welcomePanel') || node.querySelector?.('.welcomePanel')) {
-                    setTimeout(() => injectIntoWelcomePage(), 50);
-                    return;
-                }
-                if (node.classList?.contains('mes') && node.querySelector?.('.welcomePanel')) {
-                    setTimeout(() => injectIntoWelcomePage(), 50);
+                    injecting = true;
+                    setTimeout(() => {
+                        injectIntoWelcomePage();
+                        injecting = false;
+                    }, 50);
                     return;
                 }
             }
