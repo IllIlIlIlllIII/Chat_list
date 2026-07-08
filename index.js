@@ -132,6 +132,29 @@ async function deleteChat(chat) {
 let cachedChats = null;
 
 // =========================
+// Concurrency Limiter
+// =========================
+// [FIX] 캐릭터/그룹 수만큼 무제한 동시 요청이 나가던 문제 해결
+// 작은 self-hosted 서버(Termux 등)에서 순간 요청 폭주로 인해
+// /api/chats/save, /api/ping 같은 다른 핵심 요청까지 타임아웃/리셋되는 것을 방지
+async function mapWithConcurrency(items, limit, iteratee) {
+    const results = new Array(items.length);
+    let index = 0;
+    async function worker() {
+        while (index < items.length) {
+            const current = index++;
+            results[current] = await iteratee(items[current], current);
+        }
+    }
+    const workers = Array.from({ length: Math.min(limit, items.length) }, worker);
+    await Promise.all(workers);
+    return results;
+}
+
+const FETCH_CONCURRENCY = 4; // 동시 요청 수 상한 (필요시 조절)
+
+
+// =========================
 // Date Grouping Helper
 // =========================
 function getDateGroupLabel(date) {
@@ -379,119 +402,134 @@ item.addEventListener('click', async (e) => {
 }
 
 // =========================
-// Data Fetching
+// Data Fetching (수정본)
 // =========================
+let fetchInFlight = null; // [FIX] 중복 폭주 방지용 in-flight 락
+
 async function fetchAllChats() {
     if (cachedChats) return cachedChats;
 
-    const context = SillyTavern.getContext();
-    const characters = context.characters || {};
-    let allChats = [];
-    let chatStatsMap = {};
+    // [FIX] 이미 진행 중인 fetch가 있으면 그 Promise를 그대로 반환
+    // 기존: cachedChats가 null인 짧은 순간에 fetchAllChats가 여러 번 호출되면
+    //       폭주 로직이 그대로 중복 실행되어 동시 요청 수가 배로 늘어남
+    if (fetchInFlight) return fetchInFlight;
 
-    const chatListPromises = Object.entries(characters).map(async ([charId, char]) => {
-        try {
-            const chats = await getListOfCharacterChats(char.avatar);
-            return chats.filter(name => typeof name === 'string' && name).map(name => ({
-                character: char.name || charId,
-                avatar: char.avatar,
-                file_name: name,
-                characterId: charId,
-                isGroup: false
-            }));
-        } catch { return []; }
-    });
+    fetchInFlight = (async () => {
+        const context = SillyTavern.getContext();
+        const characters = context.characters || {};
+        let allChats = [];
 
-    let groupChats = [];
-    try {
-        const resp = await fetch('/api/groups/all', {
-            method: 'POST',
-            headers: getRequestHeaders(),
+        const charEntries = Object.entries(characters);
+
+        // [FIX] Promise.all → mapWithConcurrency로 교체 (동시 요청 수 제한)
+        const charChatLists = await mapWithConcurrency(charEntries, FETCH_CONCURRENCY, async ([charId, char]) => {
+            try {
+                const chats = await getListOfCharacterChats(char.avatar);
+                return chats.filter(name => typeof name === 'string' && name).map(name => ({
+                    character: char.name || charId,
+                    avatar: char.avatar,
+                    file_name: name,
+                    characterId: charId,
+                    isGroup: false
+                }));
+            } catch { return []; }
         });
-        if (resp.ok) {
-            const grps = await resp.json();
-            const groupPromises = grps.map(async (group) => {
-                try {
-                    const chats = await getGroupPastChats(group.id);
-                    return chats.map(chat => {
-                        const fileName = typeof chat === 'string'
-                            ? chat.replace('.jsonl', '')
-                            : String(chat.file_name || chat).replace('.jsonl', '');
-                        return {
-                            character: group.name || 'Group ' + group.id,
-                            avatar: group.avatar || '',
-                            file_name: fileName,
-                            characterId: group.id,
-                            isGroup: true,
-                            groupMembers: group.members || []
-                        };
-                    });
-                } catch { return []; }
+
+        let groupChats = [];
+        let groupPastChatsCache = {}; // [FIX] 그룹별 원본 stats를 여기 저장해서 재사용 (중복 fetch 제거)
+        try {
+            const resp = await fetch('/api/groups/all', {
+                method: 'POST',
+                headers: getRequestHeaders(),
             });
-            const results = await Promise.all(groupPromises);
-            groupChats = results.flat();
+            if (resp.ok) {
+                const grps = await resp.json();
+                const groupResults = await mapWithConcurrency(grps, FETCH_CONCURRENCY, async (group) => {
+                    try {
+                        const chats = await getGroupPastChats(group.id);
+                        groupPastChatsCache[group.id] = chats; // [FIX] 나중에 stats 계산에 재사용
+                        return chats.map(chat => {
+                            const fileName = typeof chat === 'string'
+                                ? chat.replace('.jsonl', '')
+                                : String(chat.file_name || chat).replace('.jsonl', '');
+                            return {
+                                character: group.name || 'Group ' + group.id,
+                                avatar: group.avatar || '',
+                                file_name: fileName,
+                                characterId: group.id,
+                                isGroup: true,
+                                groupMembers: group.members || []
+                            };
+                        });
+                    } catch { return []; }
+                });
+                groupChats = groupResults.flat();
+            }
+        } catch (e) {
+            console.warn('[Chat_list] Failed to load group chats:', e);
         }
-    } catch (e) {
-        console.warn('[Chat_list] Failed to load group chats:', e);
-    }
 
-    const charChatLists = await Promise.all(chatListPromises);
-    allChats = [...charChatLists.flat(), ...groupChats];
+        allChats = [...charChatLists.flat(), ...groupChats];
 
-    const uniqueCharIds = [...new Set(allChats.filter(c => !c.isGroup).map(c => c.characterId))];
-    const uniqueGroupIds = [...new Set(allChats.filter(c => c.isGroup).map(c => c.characterId))];
+        const uniqueCharIds = [...new Set(allChats.filter(c => !c.isGroup).map(c => c.characterId))];
 
-    const charStatsPromises = uniqueCharIds.map(async (charId) => {
-        try {
-            const statsList = await getPastCharacterChats(charId);
-            return statsList.map(stat => {
-                const fn = String(stat.file_name).replace('.jsonl', '');
-                return [charId + ':' + fn, stat];
-            });
-        } catch { return []; }
-    });
+        // [FIX] 캐릭터 stats도 concurrency 제한 적용
+        const charStatsEntries = (await mapWithConcurrency(uniqueCharIds, FETCH_CONCURRENCY, async (charId) => {
+            try {
+                const statsList = await getPastCharacterChats(charId);
+                return statsList.map(stat => {
+                    const fn = String(stat.file_name).replace('.jsonl', '');
+                    return [charId + ':' + fn, stat];
+                });
+            } catch { return []; }
+        })).flat();
 
-    const groupStatsPromises = uniqueGroupIds.map(async (groupId) => {
-        try {
-            const statsList = await getGroupPastChats(groupId);
+        // [FIX] 그룹 stats는 재요청하지 않고 위에서 이미 받아둔 groupPastChatsCache 재사용
+        // 기존: getGroupPastChats(groupId)를 그룹 수만큼 한 번 더 호출 (완전 중복 요청)
+        const groupStatsEntries = Object.entries(groupPastChatsCache).flatMap(([groupId, statsList]) => {
             return statsList.map(stat => {
                 const fn = typeof stat === 'string'
                     ? stat.replace('.jsonl', '')
                     : String(stat.file_name || stat).replace('.jsonl', '');
                 return [groupId + ':' + fn, stat];
             });
-        } catch { return []; }
-    });
+        });
 
-    const statsEntries = (await Promise.all([...charStatsPromises, ...groupStatsPromises])).flat();
-    chatStatsMap = Object.fromEntries(statsEntries);
+        const chatStatsMap = Object.fromEntries([...charStatsEntries, ...groupStatsEntries]);
 
-    allChats = allChats.map(chat => {
-        const stat = chatStatsMap[chat.characterId + ':' + chat.file_name];
-        let lastMesDate = null;
-        if (stat && stat.last_mes) {
-            const m = timestampToMoment(stat.last_mes);
-            if (m && m.isValid()) lastMesDate = m.toDate();
-        }
-        if (!lastMesDate) {
-            const match = chat.file_name.match(/(\d{4}-\d{1,2}-\d{1,2})/);
-            if (match) {
-                const parsed = new Date(match[1]);
-                if (!isNaN(parsed.getTime())) lastMesDate = parsed;
+        allChats = allChats.map(chat => {
+            const stat = chatStatsMap[chat.characterId + ':' + chat.file_name];
+            let lastMesDate = null;
+            if (stat && stat.last_mes) {
+                const m = timestampToMoment(stat.last_mes);
+                if (m && m.isValid()) lastMesDate = m.toDate();
             }
-        }
-        if (!lastMesDate) {
-            lastMesDate = new Date(0);
-        }
+            if (!lastMesDate) {
+                const match = chat.file_name.match(/(\d{4}-\d{1,2}-\d{1,2})/);
+                if (match) {
+                    const parsed = new Date(match[1]);
+                    if (!isNaN(parsed.getTime())) lastMesDate = parsed;
+                }
+            }
+            if (!lastMesDate) {
+                lastMesDate = new Date(0);
+            }
 
-        const messageCount = stat?.chat_items ?? null;
-        const fileSize = stat?.file_size ?? null;
-        return { ...chat, stat, last_mes: lastMesDate, messageCount, fileSize };
-    });
+            const messageCount = stat?.chat_items ?? null;
+            const fileSize = stat?.file_size ?? null;
+            return { ...chat, stat, last_mes: lastMesDate, messageCount, fileSize };
+        });
 
-    allChats.sort((a, b) => b.last_mes - a.last_mes);
-    cachedChats = allChats;
-    return allChats;
+        allChats.sort((a, b) => b.last_mes - a.last_mes);
+        cachedChats = allChats;
+        return allChats;
+    })();
+
+    try {
+        return await fetchInFlight;
+    } finally {
+        fetchInFlight = null; // [FIX] 완료(성공/실패 무관) 후 락 해제
+    }
 }
 
 // =========================
