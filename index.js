@@ -539,14 +539,11 @@ async function renderChatList(container, filter = '', offset = 0) {
     const allChats = await fetchAllChats();
     const filterLower = filter.toLowerCase();
 
-    const filtered = allChats.filter(chat => {
-        if (!filterLower) return true;
-        return (
-            (chat.character && chat.character.toLowerCase().includes(filterLower)) ||
-            (chat.file_name && chat.file_name.toLowerCase().includes(filterLower)) ||
-            (chat.stat && chat.stat.mes && chat.stat.mes.toLowerCase().includes(filterLower))
-        );
-    });
+
+const filtered = allChats.filter(chat => {
+    if (!filterLower) return true;
+    return chat.file_name && chat.file_name.toLowerCase().includes(filterLower);
+});
 
     const total = filtered.length;
     const page = filtered.slice(offset, offset + MAX_CHATS_PER_PAGE);
@@ -627,7 +624,7 @@ function buildManagerUI() {
 
     const filterInput = document.createElement('input');
     filterInput.type = 'text';
-    filterInput.placeholder = t`Filter chats...`;
+    filterInput.placeholder = t`Search by chat name...`;
     filterInput.className = 'cm-filter-input';
 
     const clearBtn = document.createElement('button');
