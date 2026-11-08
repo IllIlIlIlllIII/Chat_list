@@ -1,4 +1,4 @@
-chatListRefreshRunning = false;// =========================
+// =========================
 // Chat_list - SillyTavern Extension
 // Replace the Welcome Page "Recent Chats" with a full chat list.
 // List, rename, delete all chats — without entering them.
@@ -49,6 +49,16 @@ function formatFileSize(bytes) {
     return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
 }
 
+// 조건이 true가 될 때까지 대기 (최대 timeout ms)
+async function waitFor(cond, timeout = 3000, interval = 50) {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+        if (cond()) return true;
+        await new Promise(r => setTimeout(r, interval));
+    }
+    return cond();
+}
+
 // =========================
 // Settings
 // =========================
@@ -62,10 +72,6 @@ function getSettings() {
 // =========================
 // Chat Actions
 // =========================
-
-// [FIX] openChatById 단순화
-// 기존: context.groupId 잔재가 남아있으면 캐릭터 채팅도 openGroupChat으로 잘못 분기 → 이중 실행
-// 수정: isGroup 플래그만 보고 분기, 컨텍스트 상태에 의존하지 않음
 async function openChatById(chatId, isGroup = false, groupId = null) {
     if (!chatId) return;
     if (isGroup && groupId && typeof openGroupChat === 'function') {
@@ -91,6 +97,7 @@ function isCurrentManagedChat(chat) {
     }
     return !ctx.groupId && String(ctx.characterId) === String(chat.characterId);
 }
+
 function canMutateChatFiles() {
     if (isChatSaving) {
         toastr.info(
@@ -147,28 +154,21 @@ async function deleteChat(chat) {
             group.chats.splice(group.chats.indexOf(chat.file_name), 1);
 
             if (isCurrent) {
-                // 현재 채팅이었다면 새 현재 chat_id를 만든다.
                 group.chat_id = '';
 
                 const replacement =
                     group.chats[group.chats.length - 1];
 
                 if (replacement) {
-                    // 남은 채팅 중 하나로 이동
                     await openGroupChat(group.id, replacement);
                 } else {
-                    // 하나도 없으면 새 그룹 채팅 생성
                     await createNewGroupChat(group.id);
                 }
             } else {
-                // 현재 채팅이 아니면 그룹 메타데이터만 저장
                 await editGroup(group.id, true, false);
             }
 
-            if (
-                eventSource &&
-                typeof eventSource.emit === 'function'
-            ) {
+            if (eventSource && typeof eventSource.emit === 'function') {
                 await eventSource.emit(
                     event_types.GROUP_CHAT_DELETED,
                     chat.file_name,
@@ -190,15 +190,11 @@ async function deleteChat(chat) {
                 );
             }
 
-            // 현재 캐릭터 채팅이면 다른 채팅 또는 새 채팅으로 교체
             if (isCurrent) {
                 await replaceCurrentChat();
             }
 
-            if (
-                eventSource &&
-                typeof eventSource.emit === 'function'
-            ) {
+            if (eventSource && typeof eventSource.emit === 'function') {
                 await eventSource.emit(
                     event_types.CHAT_DELETED,
                     chat.file_name,
@@ -224,38 +220,23 @@ let selectedChats = new Set();
 // =========================
 // Auto Refresh
 // =========================
-
 let chatListRefreshTimer = null;
 let chatListRefreshRunning = false;
 
 /**
  * Welcome 화면에 채팅 목록이 표시되고 있을 때만 새로고침한다.
- * CHAT_CHANGED는 채팅 열기/닫기 모두 발생하므로,
- * Welcome 화면이 아닐 때는 불필요한 API 요청을 하지 않는다.
  */
 async function refreshChatListIfVisible() {
     clearTimeout(chatListRefreshTimer);
 
     chatListRefreshTimer = setTimeout(async () => {
         const container = document.getElementById('cm-container');
-
-        if (!container) {
-            return;
-        }
+        if (!container) return;
 
         const welcomePanel = container.closest('.welcomePanel');
-
-        if (!welcomePanel) {
-            return;
-        }
-
-        if (welcomePanel.offsetParent === null) {
-            return;
-        }
-
-        if (chatListRefreshRunning) {
-            return;
-        }
+        if (!welcomePanel) return;
+        if (welcomePanel.offsetParent === null) return;
+        if (chatListRefreshRunning) return;
 
         chatListRefreshRunning = true;
 
@@ -264,96 +245,39 @@ async function refreshChatListIfVisible() {
                 container.querySelector('#cm-filter-input') ??
                 container.querySelector('.cm-filter-input');
 
-            const filter =
-                filterInput?.value?.trim() ?? '';
+            const filter = filterInput?.value?.trim() ?? '';
 
             cachedChats = null;
 
-            const loader =
-                container.querySelector('#cm-loader');
+            const loader = container.querySelector('#cm-loader');
+            if (loader) loader.classList.remove('hidden');
 
-            if (loader) {
-                loader.classList.remove('hidden');
-            }
-
-            await renderChatList(
-                container,
-                filter,
-                0,
-            );
+            await renderChatList(container, filter, 0);
         } catch (error) {
-            console.error(
-                '[Chat_list] Auto refresh failed:',
-                error,
-            );
+            console.error('[Chat_list] Auto refresh failed:', error);
         } finally {
             chatListRefreshRunning = false;
         }
     }, 15);
 }
 
-/**
- * SillyTavern 채팅 상태 변경 감지
- *
- * CHAT_CHANGED:
- * - 채팅 열기
- * - 채팅 닫기
- * - 다른 채팅으로 전환
- *
- * CHAT_CREATED:
- * - 새 채팅 생성
- *
- * CHAT_RENAMED / CHAT_DELETED:
- * - 다른 기능에서 직접 변경된 경우도 반영
- */
 function setupChatListAutoRefresh() {
-    if (
-        !eventSource ||
-        typeof eventSource.on !== 'function'
-    ) {
-        console.warn(
-            '[Chat_list] eventSource.on is not available.',
-        );
+    if (!eventSource || typeof eventSource.on !== 'function') {
+        console.warn('[Chat_list] eventSource.on is not available.');
         return;
     }
 
-    eventSource.on(
-        event_types.CHAT_CHANGED,
-        refreshChatListIfVisible,
-    );
-
-    eventSource.on(
-        event_types.CHAT_CREATED,
-        refreshChatListIfVisible,
-    );
-
-    eventSource.on(
-        event_types.CHAT_RENAMED,
-        refreshChatListIfVisible,
-    );
-
-    eventSource.on(
-        event_types.CHAT_DELETED,
-        refreshChatListIfVisible,
-    );
-
-    eventSource.on(
-        event_types.GROUP_CHAT_CREATED,
-        refreshChatListIfVisible,
-    );
-
-    eventSource.on(
-        event_types.GROUP_CHAT_DELETED,
-        refreshChatListIfVisible,
-    );
+    eventSource.on(event_types.CHAT_CHANGED, refreshChatListIfVisible);
+    eventSource.on(event_types.CHAT_CREATED, refreshChatListIfVisible);
+    eventSource.on(event_types.CHAT_RENAMED, refreshChatListIfVisible);
+    eventSource.on(event_types.CHAT_DELETED, refreshChatListIfVisible);
+    eventSource.on(event_types.GROUP_CHAT_CREATED, refreshChatListIfVisible);
+    eventSource.on(event_types.GROUP_CHAT_DELETED, refreshChatListIfVisible);
 }
 
 // =========================
 // Concurrency Limiter
 // =========================
-// [FIX] 캐릭터/그룹 수만큼 무제한 동시 요청이 나가던 문제 해결
-// 작은 self-hosted 서버(Termux 등)에서 순간 요청 폭주로 인해
-// /api/chats/save, /api/ping 같은 다른 핵심 요청까지 타임아웃/리셋되는 것을 방지
 async function mapWithConcurrency(items, limit, iteratee) {
     const results = new Array(items.length);
     let index = 0;
@@ -368,8 +292,7 @@ async function mapWithConcurrency(items, limit, iteratee) {
     return results;
 }
 
-const FETCH_CONCURRENCY = 4; // 동시 요청 수 상한 (필요시 조절)
-
+const FETCH_CONCURRENCY = 4;
 
 // =========================
 // Date Grouping Helper
@@ -439,29 +362,28 @@ function renderChatItem(chat, container, refreshCallback) {
     const isCurrentChat = isCurrentManagedChat(chat);
     const stat = chat.stat;
 
-// 수정
-const item = document.createElement('div');
-item.className = 'cm-chat-item' + (isCurrentChat ? ' cm-current' : '');
+    const item = document.createElement('div');
+    item.className = 'cm-chat-item' + (isCurrentChat ? ' cm-current' : '');
 
-if (isSelectMode) {
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.className = 'cm-select-checkbox';
-    const chatKey = getChatKey(chat);
-    checkbox.checked = selectedChats.has(chatKey);
-    checkbox.addEventListener('change', (e) => {
-        e.stopPropagation();
-        if (checkbox.checked) {
-            selectedChats.add(chatKey);
-        } else {
-            selectedChats.delete(chatKey);
-        }
-    });
-    item.appendChild(checkbox);
-}
+    if (isSelectMode) {
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'cm-select-checkbox';
+        const chatKey = getChatKey(chat);
+        checkbox.checked = selectedChats.has(chatKey);
+        checkbox.addEventListener('change', (e) => {
+            e.stopPropagation();
+            if (checkbox.checked) {
+                selectedChats.add(chatKey);
+            } else {
+                selectedChats.delete(chatKey);
+            }
+        });
+        item.appendChild(checkbox);
+    }
 
-const previewImg = createPreviewImage(chat);
-item.appendChild(previewImg);
+    const previewImg = createPreviewImage(chat);
+    item.appendChild(previewImg);
 
     const info = document.createElement('div');
     info.className = 'cm-chat-info';
@@ -511,6 +433,7 @@ item.appendChild(previewImg);
     const actions = document.createElement('div');
     actions.className = 'cm-chat-actions';
 
+    // ----- Rename -----
     const renameBtn = document.createElement('button');
     renameBtn.className = 'cm-action-btn';
     renameBtn.title = t`Rename chat`;
@@ -534,50 +457,48 @@ item.appendChild(previewImg);
             if (ev.key === 'Enter') { ev.preventDefault(); popup.okButton.click(); }
         });
         const result = await popup.show();
-if (result === POPUP_RESULT.AFFIRMATIVE) {
-    if (!canMutateChatFiles()) return;
+        if (result === POPUP_RESULT.AFFIRMATIVE) {
+            if (!canMutateChatFiles()) return;
 
-    // 사용자가 .jsonl까지 입력해도 중복으로 붙지 않게 제거
-    const newFileName = nameInput.value
-        .trim()
-        .replace(/\.jsonl$/i, '')
-        .trim();
+            // 사용자가 .jsonl까지 입력해도 중복으로 붙지 않게 제거
+            const newFileName = nameInput.value
+                .trim()
+                .replace(/\.jsonl$/i, '')
+                .trim();
 
-    if (!newFileName) {
-        toastr.warning(t`Chat name cannot be empty.`);
-        return;
-    }
+            if (!newFileName) {
+                toastr.warning(t`Chat name cannot be empty.`);
+                return;
+            }
 
-    if (newFileName === chat.file_name) {
-        return;
-    }
+            if (newFileName === chat.file_name) {
+                return;
+            }
 
-    await renameGroupOrCharacterChat({
-        characterId: chat.characterId,
+            await renameGroupOrCharacterChat({
+                characterId: chat.characterId,
+                // 캐릭터 채팅일 때 현재 context.groupId를 넘기면 안 됨
+                groupId: chat.isGroup ? chat.characterId : null,
+                oldFileName: chat.file_name,
+                newFileName,
+                loader: null,
+            });
 
-        // 중요:
-        // 캐릭터 채팅일 때 현재 context.groupId를 넘기면 안 됨.
-        groupId: chat.isGroup ? chat.characterId : null,
+            cachedChats = null;
 
-        oldFileName: chat.file_name,
-        newFileName,
-        loader: null,
-    });
-
-    cachedChats = null;
-
-    if (refreshCallback) {
-        await refreshCallback();
-    }
-}
+            if (refreshCallback) {
+                await refreshCallback();
+            }
+        }
     });
     actions.appendChild(renameBtn);
 
+    // ----- Delete -----
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'cm-action-btn cm-delete-btn';
     deleteBtn.title = t`Delete chat`;
     deleteBtn.innerHTML = '<i class="fa-solid fa-trash"></i>';
-deleteBtn.addEventListener('click', async (e) => {
+    deleteBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
 
         if (!canMutateChatFiles()) {
@@ -614,8 +535,6 @@ deleteBtn.addEventListener('click', async (e) => {
         if (result === POPUP_RESULT.AFFIRMATIVE) {
             const success = await deleteChat(chat);
             if (success) {
-                // [FIX] deleteChat 내부에서 이미 cachedChats = null 처리됨
-                // 기존: 여기서 한 번 더 null 해서 이중 무효화 → 중복 refresh 요청 유발
                 if (refreshCallback) await refreshCallback();
             }
         }
@@ -625,28 +544,28 @@ deleteBtn.addEventListener('click', async (e) => {
     item.appendChild(actions);
     container.appendChild(item);
 
-item.addEventListener('click', async (e) => {
-    if (e.target.closest('.cm-action-btn')) return;
+    // ----- Open chat / toggle select -----
+    item.addEventListener('click', async (e) => {
+        if (e.target.closest('.cm-action-btn')) return;
 
-    // 선택 모드면 체크박스 토글
-    if (isSelectMode) {
-        const chatKey = getChatKey(chat);
-        const checkbox = item.querySelector('.cm-select-checkbox');
-        if (selectedChats.has(chatKey)) {
-            selectedChats.delete(chatKey);
-            if (checkbox) checkbox.checked = false;
-        } else {
-            selectedChats.add(chatKey);
-            if (checkbox) checkbox.checked = true;
+        // 선택 모드면 체크박스 토글
+        if (isSelectMode) {
+            const chatKey = getChatKey(chat);
+            const checkbox = item.querySelector('.cm-select-checkbox');
+            if (selectedChats.has(chatKey)) {
+                selectedChats.delete(chatKey);
+                if (checkbox) checkbox.checked = false;
+            } else {
+                selectedChats.add(chatKey);
+                if (checkbox) checkbox.checked = true;
+            }
+            return;
         }
-        return;
-    }
-        let ctx = SillyTavern.getContext();
+
+        const ctx = SillyTavern.getContext();
         const currentChatId = getCurrentChatId();
 
-        // [FIX] 이미 열려있는 채팅을 다시 클릭 시 불필요한 재로드 방지
-        // 기존: 현재 활성 채팅과 동일해도 무조건 openGroupChat/openCharacterChat 호출 → 1초 내 재로드 발생
-        // 수정: 그룹/캐릭터 id + 현재 chatId가 모두 일치하면 아무 동작 없이 종료
+        // 이미 열려있는 채팅이면 아무 동작 없이 종료
         if (chat.isGroup) {
             if (String(ctx.groupId) === String(chat.characterId) && currentChatId === chat.file_name) {
                 return;
@@ -657,19 +576,34 @@ item.addEventListener('click', async (e) => {
             }
         }
 
+        // 저장/생성 진행 중이면 전환하지 않음
+        // (이 상태에서 전환하면 엉뚱한 새 채팅이 생성될 수 있음)
+        if (isChatSaving || is_send_press || is_group_generating) {
+            toastr.info(t`Please wait until the chat is saved.`);
+            return;
+        }
+
         if (chat.isGroup) {
             const group = groups.find(g => g.id === chat.characterId);
             if (!group) return;
             await openGroupChat(group.id, chat.file_name);
         } else {
-            // 그룹에 있다가 캐릭터로 넘어오는 경우도 포함해서 characterId 불일치 체크
             if (ctx.groupId || String(ctx.characterId) !== String(chat.characterId)) {
                 await selectCharacterById(chat.characterId);
-                await new Promise(r => setTimeout(r, 200)); // 캐릭터 전환 완료 여유
+
+                // 고정 대기 대신, 실제로 전환됐는지 확인 (최대 3초)
+                const switched = await waitFor(() => {
+                    const c = SillyTavern.getContext();
+                    return !c.groupId && String(c.characterId) === String(chat.characterId);
+                });
+
+                if (!switched) {
+                    toastr.warning(t`Character switch failed. Please try again.`);
+                    return;
+                }
             }
 
-            // [FIX] selectCharacterById가 캐릭터 전환 시 마지막 활성 채팅을 자동 로드하는 경우가 있음.
-            // 원하는 채팅이 이미 로드돼 있다면 openCharacterChat을 또 호출하지 않아 이중 로드(재로드) 방지
+            // selectCharacterById가 이미 원하는 채팅을 로드했다면 재호출하지 않음
             if (getCurrentChatId() !== chat.file_name) {
                 await openCharacterChat(chat.file_name);
             }
@@ -678,9 +612,9 @@ item.addEventListener('click', async (e) => {
 }
 
 // =========================
-// Data Fetching (수정본)
+// Data Fetching
 // =========================
-let fetchInFlight = null; // [FIX] 중복 폭주 방지용 in-flight 락
+let fetchInFlight = null;
 
 async function fetchAllChats() {
     if (cachedChats) return cachedChats;
@@ -701,22 +635,16 @@ async function fetchAllChats() {
             FETCH_CONCURRENCY,
             async ([charId, char]) => {
                 try {
-                    const statsList =
-                        await getPastCharacterChats(charId);
+                    const statsList = await getPastCharacterChats(charId);
 
                     return statsList
                         .filter(stat => stat && stat.file_name)
                         .map(stat => ({
                             character: char.name || charId,
                             avatar: char.avatar,
-
-                            file_name: String(stat.file_name)
-                                .replace(/\.jsonl$/i, ''),
-
+                            file_name: String(stat.file_name).replace(/\.jsonl$/i, ''),
                             characterId: charId,
                             isGroup: false,
-
-                            // 나중에 다시 요청하지 않도록 그대로 보관
                             stat,
                         }));
                 } catch {
@@ -741,44 +669,22 @@ async function fetchAllChats() {
                     FETCH_CONCURRENCY,
                     async (group) => {
                         try {
-                            const chats =
-                                await getGroupPastChats(group.id);
+                            const chats = await getGroupPastChats(group.id);
 
                             return chats.map(chat => {
-                                const stat =
-                                    typeof chat === 'string'
-                                        ? null
-                                        : chat;
+                                const stat = typeof chat === 'string' ? null : chat;
 
-                                const fileName =
-                                    typeof chat === 'string'
-                                        ? chat.replace(
-                                            /\.jsonl$/i,
-                                            '',
-                                        )
-                                        : String(
-                                            chat.file_name || chat,
-                                        ).replace(
-                                            /\.jsonl$/i,
-                                            '',
-                                        );
+                                const fileName = typeof chat === 'string'
+                                    ? chat.replace(/\.jsonl$/i, '')
+                                    : String(chat.file_name || chat).replace(/\.jsonl$/i, '');
 
                                 return {
-                                    character:
-                                        group.name ||
-                                        'Group ' + group.id,
-
-                                    avatar:
-                                        group.avatar || '',
-
+                                    character: group.name || 'Group ' + group.id,
+                                    avatar: group.avatar || '',
                                     file_name: fileName,
-
                                     characterId: group.id,
                                     isGroup: true,
-
-                                    groupMembers:
-                                        group.members || [],
-
+                                    groupMembers: group.members || [],
                                     stat,
                                 };
                             });
@@ -791,10 +697,7 @@ async function fetchAllChats() {
                 groupChats = groupResults.flat();
             }
         } catch (e) {
-            console.warn(
-                '[Chat_list] Failed to load group chats:',
-                e,
-            );
+            console.warn('[Chat_list] Failed to load group chats:', e);
         }
 
         allChats = [
@@ -807,7 +710,6 @@ async function fetchAllChats() {
 
             if (stat && stat.last_mes) {
                 const m = timestampToMoment(stat.last_mes);
-
                 if (m && m.isValid()) {
                     lastMesDate = m.toDate();
                 }
@@ -815,13 +717,9 @@ async function fetchAllChats() {
 
             // 파일명 기반 fallback
             if (!lastMesDate) {
-                const match = chat.file_name.match(
-                    /(\d{4}-\d{1,2}-\d{1,2})/,
-                );
-
+                const match = chat.file_name.match(/(\d{4}-\d{1,2}-\d{1,2})/);
                 if (match) {
                     const parsed = new Date(match[1]);
-
                     if (!isNaN(parsed.getTime())) {
                         lastMesDate = parsed;
                     }
@@ -834,20 +732,13 @@ async function fetchAllChats() {
 
             return {
                 ...chat,
-
                 last_mes: lastMesDate,
-
-                messageCount:
-                    stat?.chat_items ?? null,
-
-                fileSize:
-                    stat?.file_size ?? null,
+                messageCount: stat?.chat_items ?? null,
+                fileSize: stat?.file_size ?? null,
             };
         });
 
-        allChats.sort(
-            (a, b) => b.last_mes - a.last_mes,
-        );
+        allChats.sort((a, b) => b.last_mes - a.last_mes);
 
         cachedChats = allChats;
         return allChats;
@@ -867,11 +758,11 @@ async function renderChatList(container, filter = '', offset = 0) {
     const allChats = await fetchAllChats();
     const filterLower = filter.toLowerCase();
 
-
-const filtered = allChats.filter(chat => {
-    if (!filterLower) return true;
-    return chat.file_name && chat.file_name.toLowerCase().includes(filterLower);
-});
+    // 채팅방 이름(파일명)만 대상, 부분 일치, 대소문자 무시
+    const filtered = allChats.filter(chat => {
+        if (!filterLower) return true;
+        return chat.file_name && chat.file_name.toLowerCase().includes(filterLower);
+    });
 
     const total = filtered.length;
     const page = filtered.slice(offset, offset + MAX_CHATS_PER_PAGE);
@@ -936,139 +827,111 @@ function buildManagerUI() {
     const container = document.createElement('div');
     container.id = 'cm-container';
 
-const titleRow = document.createElement('div');
-titleRow.className = 'cm-title-row';
-const titleText = document.createElement('div');
-titleText.className = 'cm-title';
-titleText.textContent = t`All Chats`;
-titleRow.appendChild(titleText);
+    const titleRow = document.createElement('div');
+    titleRow.className = 'cm-title-row';
+    const titleText = document.createElement('div');
+    titleText.className = 'cm-title';
+    titleText.textContent = t`All Chats`;
+    titleRow.appendChild(titleText);
 
-const selectDeleteBtn = document.createElement('button');
-selectDeleteBtn.className = 'cm-action-btn cm-select-mode-btn';
-selectDeleteBtn.innerHTML = '<i class="fa-solid fa-check-square"></i> ' + t`Select`;
-selectDeleteBtn.title = t`Select multiple chats to delete`;
+    const selectDeleteBtn = document.createElement('button');
+    selectDeleteBtn.className = 'cm-action-btn cm-select-mode-btn';
+    selectDeleteBtn.innerHTML = '<i class="fa-solid fa-check-square"></i> ' + t`Select`;
+    selectDeleteBtn.title = t`Select multiple chats to delete`;
 
-selectDeleteBtn.addEventListener('click', () => {
-    isSelectMode = !isSelectMode;
-    selectedChats.clear();
+    selectDeleteBtn.addEventListener('click', () => {
+        isSelectMode = !isSelectMode;
+        selectedChats.clear();
 
-    selectDeleteBtn.innerHTML = isSelectMode
-        ? '<i class="fa-solid fa-xmark"></i> ' + t`Cancel`
-        : '<i class="fa-solid fa-check-square"></i> ' + t`Select`;
+        selectDeleteBtn.innerHTML = isSelectMode
+            ? '<i class="fa-solid fa-xmark"></i> ' + t`Cancel`
+            : '<i class="fa-solid fa-check-square"></i> ' + t`Select`;
 
-    selectDeleteBtn.classList.toggle(
-        'cm-select-mode-active',
-        isSelectMode
-    );
+        selectDeleteBtn.classList.toggle('cm-select-mode-active', isSelectMode);
+        confirmDeleteBtn.classList.toggle('hidden', !isSelectMode);
 
-    confirmDeleteBtn.classList.toggle(
-        'hidden',
-        !isSelectMode
-    );
-
-    renderChatList(
-        container,
-        filterInput.value.trim(),
-        0
-    );
-});
-
-
-const confirmDeleteBtn = document.createElement('button');
-confirmDeleteBtn.className =
-    'cm-action-btn cm-delete-btn cm-confirm-delete-btn hidden';
-
-confirmDeleteBtn.innerHTML =
-    '<i class="fa-solid fa-trash"></i> ' + t`Delete Selected`;
-
-confirmDeleteBtn.addEventListener('click', async () => {
-    if (selectedChats.size === 0) {
-        toastr.warning(t`No chats selected.`);
-        return;
-    }
-
-    const allChats = await fetchAllChats();
-
-    const toDelete = allChats.filter(
-        c => selectedChats.has(getChatKey(c))
-    );
-
-    if (toDelete.length === 0) {
-        toastr.warning(t`No valid chats selected.`);
-        return;
-    }
-
-    const orderedToDelete = [...toDelete].sort((a, b) => {
-        const aCurrent = isCurrentManagedChat(a);
-        const bCurrent = isCurrentManagedChat(b);
-
-        return Number(aCurrent) - Number(bCurrent);
+        renderChatList(container, filterInput.value.trim(), 0);
     });
 
-    const content = document.createElement('div');
-    content.innerHTML =
-        '<h3>' + t`Delete selected chats?` + '</h3>';
+    const confirmDeleteBtn = document.createElement('button');
+    confirmDeleteBtn.className =
+        'cm-action-btn cm-delete-btn cm-confirm-delete-btn hidden';
+    confirmDeleteBtn.innerHTML =
+        '<i class="fa-solid fa-trash"></i> ' + t`Delete Selected`;
 
-    const countMsg = document.createElement('p');
-    countMsg.textContent =
-        toDelete.length + t` chats will be deleted.`;
+    confirmDeleteBtn.addEventListener('click', async () => {
+        if (selectedChats.size === 0) {
+            toastr.warning(t`No chats selected.`);
+            return;
+        }
 
-    countMsg.style.color = '#e74c3c';
-    countMsg.style.fontWeight = 'bold';
+        const allChats = await fetchAllChats();
 
-    content.appendChild(countMsg);
+        const toDelete = allChats.filter(
+            c => selectedChats.has(getChatKey(c))
+        );
 
-    const popup = new Popup(
-        content,
-        POPUP_TYPE.CONFIRM,
-        '',
-        {
+        if (toDelete.length === 0) {
+            toastr.warning(t`No valid chats selected.`);
+            return;
+        }
+
+        // 현재 채팅은 반드시 마지막에 삭제한다.
+        const orderedToDelete = [...toDelete].sort((a, b) => {
+            const aCurrent = isCurrentManagedChat(a);
+            const bCurrent = isCurrentManagedChat(b);
+            return Number(aCurrent) - Number(bCurrent);
+        });
+
+        const content = document.createElement('div');
+        content.innerHTML = '<h3>' + t`Delete selected chats?` + '</h3>';
+
+        const countMsg = document.createElement('p');
+        countMsg.textContent = toDelete.length + t` chats will be deleted.`;
+        countMsg.style.color = '#e74c3c';
+        countMsg.style.fontWeight = 'bold';
+        content.appendChild(countMsg);
+
+        const popup = new Popup(content, POPUP_TYPE.CONFIRM, '', {
             okButton: t`Delete All`,
             cancelButton: t`Cancel`
+        });
+
+        const result = await popup.show();
+
+        if (result !== POPUP_RESULT.AFFIRMATIVE) {
+            return;
         }
-    );
 
-    const result = await popup.show();
+        for (const chat of orderedToDelete) {
+            await deleteChat(chat);
+        }
 
-    if (result !== POPUP_RESULT.AFFIRMATIVE) {
-        return;
-    }
+        isSelectMode = false;
+        selectedChats.clear();
 
-    for (const chat of orderedToDelete) {
-        await deleteChat(chat);
-    }
+        selectDeleteBtn.innerHTML =
+            '<i class="fa-solid fa-check-square"></i> ' + t`Select`;
+        selectDeleteBtn.classList.remove('cm-select-mode-active');
+        confirmDeleteBtn.classList.add('hidden');
 
-    isSelectMode = false;
-    selectedChats.clear();
+        cachedChats = null;
 
-    selectDeleteBtn.innerHTML =
-        '<i class="fa-solid fa-check-square"></i> ' + t`Select`;
+        await renderChatList(container, filterInput.value.trim(), 0);
+    });
 
-    selectDeleteBtn.classList.remove(
-        'cm-select-mode-active'
-    );
+    // [Select/Cancel] [Delete Selected] 순서
+    titleRow.appendChild(selectDeleteBtn);
+    titleRow.appendChild(confirmDeleteBtn);
 
-    confirmDeleteBtn.classList.add('hidden');
+    const filterInput = document.createElement('input');
+    filterInput.type = 'text';
+    filterInput.id = 'cm-filter-input';
+    filterInput.placeholder = t`Search by chat name...`;
+    filterInput.className = 'cm-filter-input';
 
-    cachedChats = null;
+    container.appendChild(titleRow);
 
-    await renderChatList(
-        container,
-        filterInput.value.trim(),
-        0
-    );
-});
-
-titleRow.appendChild(selectDeleteBtn);
-titleRow.appendChild(confirmDeleteBtn);
-
-const filterInput = document.createElement('input');
-filterInput.type = 'text';
-filterInput.id = 'cm-filter-input';
-filterInput.placeholder = t`Search by chat name...`;
-filterInput.className = 'cm-filter-input';  
-    
-container.appendChild(titleRow);
     const filterRow = document.createElement('div');
     filterRow.className = 'cm-filter-row';
 
@@ -1168,17 +1031,13 @@ function setupWelcomePageObserver() {
 
     injectIntoWelcomePage();
 
-    // [FIX] Observer 중복 실행 및 자기 트리거 방지
-    // 기존: injecting 플래그로 콜백 내부 로직만 막았지만, MutationObserver 콜백은 비동기(microtask)로 실행되기 때문에
-    //       injecting = false로 돌아온 이후에 자기 자신이 만든 mutation이 뒤늦게 처리될 여지가 있었음
-    // 수정: 주입 시작 시 observer.disconnect()로 관찰 자체를 끊고, 주입이 끝난 뒤 다시 observe() 재개
     let injecting = false;
     const observer = new MutationObserver((mutations) => {
         if (injecting) return;
         for (const mutation of mutations) {
             for (const node of mutation.addedNodes) {
                 if (node.nodeType !== Node.ELEMENT_NODE) continue;
-                if (node.id === 'cm-container' || node.querySelector?.('#cm-container')) continue; // 자기 자신 삽입은 무시
+                if (node.id === 'cm-container' || node.querySelector?.('#cm-container')) continue;
                 if (node.classList?.contains('welcomePanel') || node.querySelector?.('.welcomePanel')) {
                     injecting = true;
                     observer.disconnect();
@@ -1255,7 +1114,8 @@ function renderExtensionSettings() {
     const settings = getSettings();
     renderExtensionSettings();
     if (settings.enabled === false) {
-        return;}
+        return;
+    }
     setupChatListAutoRefresh();
     setupWelcomePageObserver();
 })();
